@@ -1,0 +1,15 @@
+node_modules/
+out/
+dist/
+release/
+*.log
+vite-renderer.out.log
+vite-renderer.err.log
+*.zip
+*.asar
+*.mp4
+.DS_Store
+Thumbs.db
+# 本地备份副本与工作数据，不推送到远程
+topspeed-builder-main/
+.workbuddy/

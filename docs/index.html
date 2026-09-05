@@ -1,0 +1,1126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Topspeed Builder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-deep: #070a0e;
+  --bg-surface: #0c1118;
+  --bg-card: #121a24;
+  --bg-card-hover: #182230;
+  --border: #1e2a38;
+  --border-light: #2a3a4c;
+  --cyan: #00d4ff;
+  --cyan-dim: rgba(0,212,255,0.12);
+  --cyan-glow: rgba(0,212,255,0.25);
+  --cyan-text: #6ae2ff;
+  --amber: #ff7a00;
+  --amber-dim: rgba(255,122,0,0.1);
+  --amber-glow: rgba(255,122,0,0.2);
+  --amber-text: #ffa940;
+  --magenta: #ff2d95;
+  --text: #d4dee8;
+  --text-muted: #6a7f92;
+  --text-dim: #3d5164;
+  --radius: 8px;
+  --radius-lg: 14px;
+  --font-display: 'Bebas Neue', sans-serif;
+  --font-body: 'JetBrains Mono', monospace;
+  --shadow-card: 0 2px 20px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.03);
+  --shadow-glow-cyan: 0 0 30px rgba(0,212,255,0.08);
+  --transition: 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+html {
+  scroll-behavior: smooth;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) var(--bg-deep);
+}
+
+body {
+  background: var(--bg-deep);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* ── Scanlines ── */
+body::after {
+  content: '';
+  position: fixed; inset: 0; z-index: 9999;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent, transparent 2px,
+    rgba(0,0,0,0.04) 2px, rgba(0,0,0,0.04) 4px
+  );
+}
+
+/* ── Grid Background ── */
+.grid-bg {
+  position: fixed; inset: 0; z-index: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.grid-bg::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse 70% 50% at 50% 0%, rgba(0,212,255,0.06) 0%, transparent 70%),
+              radial-gradient(ellipse 50% 40% at 50% 100%, rgba(255,122,0,0.04) 0%, transparent 70%);
+}
+
+/* ── Spark Particles ── */
+.sparks {
+  position: fixed; inset: 0; z-index: 0;
+  pointer-events: none; overflow: hidden;
+}
+.spark {
+  position: absolute;
+  width: 2px; height: 2px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 6px var(--cyan), 0 0 12px var(--cyan-dim);
+  animation: float-spark linear infinite;
+  opacity: 0;
+}
+@keyframes float-spark {
+  0% { opacity: 0; transform: translateY(100vh) translateX(0); }
+  10% { opacity: 0.6; }
+  90% { opacity: 0.3; }
+  100% { opacity: 0; transform: translateY(-10vh) translateX(80px); }
+}
+
+/* ── Hero ── */
+.hero {
+  position: relative; z-index: 1;
+  min-height: 100vh;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center;
+  padding: 110px 24px 70px;
+  border-bottom: 1px solid var(--border);
+}
+
+.hero-emblems {
+  position: absolute; inset: 0; overflow: hidden; pointer-events: none;
+}
+
+.hero-ring {
+  position: absolute;
+  border: 1px solid rgba(0,212,255,0.06);
+  border-radius: 50%;
+  animation: ring-pulse 8s ease-in-out infinite;
+}
+.hero-ring:nth-child(1) {
+  width: 600px; height: 600px; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  animation-delay: 0s;
+}
+.hero-ring:nth-child(2) {
+  width: 420px; height: 420px; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  border-color: rgba(255,122,0,0.05);
+  animation-delay: -2s;
+}
+.hero-ring:nth-child(3) {
+  width: 240px; height: 240px; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  border-color: rgba(0,212,255,0.08);
+  animation-delay: -4s;
+}
+
+@keyframes ring-pulse {
+  0%, 100% { transform: translate(-50%,-50%) scale(1); opacity: 0.4; }
+  50% { transform: translate(-50%,-50%) scale(1.08); opacity: 0.8; }
+}
+
+.hero-badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 16px;
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  font-size: 12px; text-transform: uppercase; letter-spacing: 2px;
+  color: var(--text-muted); margin-bottom: 32px;
+  animation: fade-up 0.8s 0.2s both;
+}
+.hero-badge-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 8px var(--cyan);
+  animation: dot-breathe 2s ease-in-out infinite;
+}
+@keyframes dot-breathe {
+  0%, 100% { opacity: 0.4; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+.hero h1 {
+  font-family: var(--font-display);
+  font-size: clamp(64px, 12vw, 140px);
+  line-height: 0.92;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  color: var(--text);
+  margin-bottom: 8px;
+  animation: fade-up 0.8s 0.35s both;
+}
+
+.hero h1 .highlight {
+  background: linear-gradient(135deg, var(--cyan-text), var(--amber-text));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.hero-hr {
+  width: 120px; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--cyan), var(--amber), transparent);
+  margin: 16px auto 20px;
+  animation: fade-up 0.8s 0.5s both;
+}
+
+.hero p {
+  font-size: clamp(14px, 1.8vw, 17px);
+  color: var(--text-muted);
+  max-width: 580px;
+  line-height: 1.8;
+  animation: fade-up 0.8s 0.65s both;
+}
+
+.hero-actions {
+  display: flex; gap: 16px; margin-top: 40px; flex-wrap: wrap; justify-content: center;
+  animation: fade-up 0.8s 0.8s both;
+}
+
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 12px 28px; border-radius: 6px;
+  font-family: var(--font-body); font-size: 13px; font-weight: 500;
+  text-transform: uppercase; letter-spacing: 1.5px;
+  text-decoration: none; cursor: pointer;
+  transition: var(--transition);
+  border: 1px solid transparent;
+}
+.btn-primary {
+  background: var(--cyan); color: #000;
+  border-color: var(--cyan);
+  box-shadow: 0 0 20px var(--cyan-dim);
+}
+.btn-primary:hover {
+  box-shadow: 0 0 40px var(--cyan-glow);
+  transform: translateY(-2px);
+}
+.btn-outline {
+  border-color: var(--border-light); color: var(--text-muted); background: transparent;
+}
+.btn-outline:hover {
+  border-color: var(--cyan); color: var(--cyan-text);
+  transform: translateY(-2px);
+}
+
+.hero-scroll {
+  position: absolute; bottom: 32px; left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  color: var(--text-dim); font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
+  animation: fade-up 0.8s 1s both;
+}
+.scroll-line {
+  width: 1px; height: 32px;
+  background: linear-gradient(var(--cyan), transparent);
+  animation: scroll-pulse 2s ease-in-out infinite;
+}
+@keyframes scroll-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.8; }
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Navigation ── */
+.nav {
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(7,10,14,0.92);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
+  transition: var(--transition);
+}
+.nav-inner {
+  max-width: 1100px; margin: 0 auto;
+  display: flex; align-items: center; gap: 4px;
+  height: 56px; overflow-x: auto;
+  scrollbar-width: none;
+}
+.nav-inner::-webkit-scrollbar { display: none; }
+.nav a {
+  flex-shrink: 0;
+  padding: 10px 16px;
+  font-size: 13px; font-weight: 500;
+  letter-spacing: 1.2px; text-transform: uppercase;
+  color: var(--text-muted); text-decoration: none;
+  border-radius: 4px;
+  transition: var(--transition);
+  position: relative;
+}
+.nav a:hover, .nav a.active { color: var(--cyan-text); background: var(--cyan-dim); }
+.nav a.active::after {
+  content: '';
+  position: absolute; bottom: 0; left: 16px; right: 16px;
+  height: 2px; background: var(--cyan);
+  box-shadow: 0 0 8px var(--cyan);
+}
+
+/* ── Layout ── */
+.container {
+  position: relative; z-index: 1;
+  max-width: 1100px; margin: 0 auto;
+  padding: 0 24px;
+}
+
+section {
+  padding: 96px 0;
+  border-bottom: 1px solid rgba(30,42,56,0.4);
+}
+
+.section-header {
+  margin-bottom: 56px;
+}
+
+.section-number {
+  font-size: 12px; letter-spacing: 3px; text-transform: uppercase;
+  color: var(--text-dim); margin-bottom: 8px;
+}
+
+.section-title {
+  font-family: var(--font-display);
+  font-size: clamp(36px, 5vw, 56px);
+  line-height: 1;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+
+.section-title span {
+  background: linear-gradient(135deg, var(--cyan-text), var(--amber-text));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.section-desc {
+  color: var(--text-muted);
+  font-size: 15px;
+  max-width: 640px;
+}
+
+/* ── Reveal Animation ── */
+.reveal {
+  opacity: 0; transform: translateY(30px);
+  transition: opacity 0.7s ease, transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.reveal.visible {
+  opacity: 1; transform: translateY(0);
+}
+.reveal-delay-1 { transition-delay: 0.05s; }
+.reveal-delay-2 { transition-delay: 0.1s; }
+.reveal-delay-3 { transition-delay: 0.15s; }
+.reveal-delay-4 { transition-delay: 0.2s; }
+.reveal-delay-5 { transition-delay: 0.25s; }
+
+/* ── Overview ── */
+.overview-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 56px;
+}
+@media (max-width: 700px) { .overview-grid { grid-template-columns: 1fr; gap: 40px; } }
+
+.overview-text p {
+  color: var(--text-muted);
+  margin-bottom: 16px;
+  font-size: 15px;
+}
+.overview-text p:last-child { margin-bottom: 0; }
+
+.stats {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+}
+.stat-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  text-align: center;
+  transition: var(--transition);
+}
+.stat-card:hover {
+  border-color: var(--cyan); background: var(--bg-card-hover);
+  box-shadow: var(--shadow-glow-cyan);
+}
+.stat-num {
+  font-family: var(--font-display);
+  font-size: 40px; line-height: 1;
+  background: linear-gradient(135deg, var(--cyan-text), var(--amber-text));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.stat-label {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px;
+  color: var(--text-muted); margin-top: 6px;
+}
+
+/* ── Features Grid ── */
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 20px;
+}
+
+.feature-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 32px 28px;
+  transition: var(--transition);
+  position: relative;
+  overflow: hidden;
+}
+.feature-card::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, var(--cyan), var(--amber));
+  opacity: 0;
+  transition: var(--transition);
+}
+.feature-card:hover {
+  border-color: var(--border-light);
+  background: var(--bg-card-hover);
+  transform: translateY(-3px);
+  box-shadow: 0 8px 40px rgba(0,0,0,0.4), 0 0 20px rgba(0,212,255,0.05);
+}
+.feature-card:hover::before { opacity: 1; }
+
+.feature-icon {
+  font-size: 26px; margin-bottom: 14px;
+  display: inline-block;
+}
+.feature-card h3 {
+  font-family: var(--font-display);
+  font-size: 22px; letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+.feature-card p {
+  font-size: 14px; color: var(--text-muted); line-height: 1.7;
+}
+.feature-tag {
+  display: inline-block;
+  margin-top: 14px;
+  padding: 4px 12px;
+  border-radius: 100px;
+  font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+/* ── Architecture ── */
+.arch-diagram {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr 1.2fr;
+  gap: 20px;
+  margin: 40px 0;
+}
+@media (max-width: 700px) { .arch-diagram { grid-template-columns: 1fr; } }
+
+.arch-node {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 28px;
+  text-align: center;
+  transition: var(--transition);
+  position: relative;
+}
+.arch-node:hover {
+  border-color: var(--cyan);
+  box-shadow: var(--shadow-glow-cyan);
+}
+.arch-node.main { border-top: 2px solid var(--amber); }
+.arch-node.preload { border-top: 2px solid var(--magenta); }
+.arch-node.renderer { border-top: 2px solid var(--cyan); }
+
+.arch-arrow {
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-dim); font-size: 20px;
+}
+@media (max-width: 700px) { .arch-arrow { transform: rotate(90deg); padding: 4px; } }
+
+.arch-node h4 {
+  font-family: var(--font-display);
+  font-size: 24px; letter-spacing: 1.5px;
+  margin-bottom: 6px;
+}
+.arch-node .arch-badge {
+  display: inline-block;
+  font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase;
+  padding: 3px 12px; border-radius: 100px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+}
+.main .arch-badge { color: var(--amber-text); border-color: var(--amber-dim); }
+.preload .arch-badge { color: var(--magenta); border-color: rgba(255,45,149,0.2); }
+.renderer .arch-badge { color: var(--cyan-text); border-color: var(--cyan-dim); }
+
+.arch-node p {
+  font-size: 13px; color: var(--text-muted); line-height: 1.7;
+}
+.arch-node .tech-list {
+  margin-top: 14px;
+  display: flex; flex-wrap: wrap; gap: 6px; justify-content: center;
+}
+.arch-node .tech-list span {
+  font-size: 12px; padding: 3px 10px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 3px;
+  color: var(--text-muted);
+}
+
+/* ── Services ── */
+.services-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 18px;
+}
+
+.service-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  transition: var(--transition);
+}
+.service-card:hover {
+  border-color: var(--border-light);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+}
+.service-card h4 {
+  font-family: var(--font-display);
+  font-size: 20px; letter-spacing: 1px;
+  margin-bottom: 8px;
+}
+.service-card .service-file {
+  font-size: 12px; color: var(--text-dim);
+  margin-bottom: 10px;
+  padding: 3px 10px; background: rgba(0,0,0,0.3); border-radius: 3px;
+  display: inline-block;
+}
+.service-card p {
+  font-size: 14px; color: var(--text-muted); line-height: 1.7;
+}
+
+/* ── Tables ── */
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+}
+table {
+  width: 100%; border-collapse: collapse;
+  font-size: 13px;
+}
+thead th {
+  text-align: left;
+  padding: 14px 18px;
+  font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  background: rgba(0,0,0,0.2);
+}
+tbody td {
+  padding: 12px 18px;
+  border-bottom: 1px solid rgba(30,42,56,0.3);
+  color: var(--text);
+  vertical-align: top;
+}
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover td { background: rgba(0,212,255,0.02); }
+tbody td:first-child { font-weight: 500; color: var(--cyan-text); }
+.table-muted { color: var(--text-muted) !important; }
+
+/* ── Code Blocks ── */
+.code-block {
+  background: #05080c;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px 28px;
+  overflow-x: auto;
+  font-size: 13px; line-height: 1.8;
+  position: relative;
+}
+.code-block::before {
+  content: attr(data-lang);
+  position: absolute; top: 12px; right: 16px;
+  font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--text-dim);
+}
+.code-block code { font-family: var(--font-body); }
+.code-keyword { color: var(--cyan-text); }
+.code-string { color: var(--amber-text); }
+.code-comment { color: var(--text-dim); }
+.code-punctuation { color: var(--text-muted); }
+
+/* ── Tree ── */
+.tree {
+  font-family: var(--font-body);
+  font-size: 13px; line-height: 2;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px 32px;
+}
+.tree-line { display: block; }
+.tree-dir { color: var(--cyan-text); }
+.tree-file { color: var(--text-muted); }
+.tree-indent { color: var(--text-dim); }
+
+/* ── Footer ── */
+.footer {
+  position: relative; z-index: 1;
+  text-align: center;
+  padding: 48px 24px;
+  border-top: 1px solid var(--border);
+}
+.footer p {
+  font-size: 13px; color: var(--text-dim);
+  letter-spacing: 1px;
+}
+.footer a {
+  color: var(--text-muted); text-decoration: none;
+  transition: var(--transition);
+}
+.footer a:hover { color: var(--cyan-text); }
+
+/* ── Responsive ── */
+@media (max-width: 600px) {
+  .hero h1 { font-size: 48px; }
+  .section-title { font-size: 28px; }
+  section { padding: 56px 0; }
+  .nav { display: none; }
+  .features-grid { grid-template-columns: 1fr; }
+  .services-grid { grid-template-columns: 1fr; }
+  .stats { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<div class="grid-bg"></div>
+<div class="sparks" id="sparks"></div>
+
+<!-- ═══ HERO ═══ -->
+<header class="hero" id="top">
+  <div class="hero-emblems">
+    <div class="hero-ring"></div>
+    <div class="hero-ring"></div>
+    <div class="hero-ring"></div>
+  </div>
+
+  <div class="hero-badge">
+    <span class="hero-badge-dot"></span>
+    v1.1.0 · MIT
+  </div>
+
+  <h1>Topspeed<br><span class="highlight">Builder</span></h1>
+
+  <div class="hero-hr"></div>
+
+  <p>Electron · React · TypeScript 桌面应用，将 AI 图片生成接入本地 2D 游戏素材流水线。</p>
+
+  <div class="hero-actions">
+    <a href="#overview" class="btn btn-primary">浏览文档</a>
+    <a href="https://github.com/voicepeak/topspeed-builder/releases" class="btn btn-outline" target="_blank">下载安装包</a>
+    <a href="https://github.com/voicepeak/topspeed-builder" class="btn btn-outline" target="_blank">GitHub</a>
+  </div>
+
+  <div class="hero-scroll">
+    滚动探索
+    <div class="scroll-line"></div>
+  </div>
+</header>
+
+<!-- ═══ NAV ═══ -->
+<nav class="nav" id="navbar">
+  <div class="nav-inner">
+    <a href="#overview" class="active">概览</a>
+    <a href="#features">功能模块</a>
+    <a href="#architecture">架构</a>
+    <a href="#services">服务</a>
+    <a href="#stack">技术栈</a>
+    <a href="#exports">导出目标</a>
+    <a href="#quickstart">快速开始</a>
+    <a href="#structure">项目结构</a>
+  </div>
+</nav>
+
+<!-- ═══ CONTENT ═══ -->
+<div class="container">
+
+<!-- ─── Overview ─── -->
+<section id="overview">
+  <div class="section-header reveal">
+    <div class="section-number">01</div>
+    <h2 class="section-title">项目<span>概览</span></h2>
+    <p class="section-desc">面向独立游戏开发者、美术原型师和工具链验证场景。</p>
+  </div>
+
+  <div class="overview-grid">
+    <div class="overview-text reveal reveal-delay-1">
+      <p>创建本地项目，定义游戏类型、美术风格与导出目标，批量生成图标、道具、角色动作帧、怪物、背景、特效和瓦片集。所有数据与密钥均保存在本地，无云端依赖。</p>
+      <p>支持 OpenAI 兼容接口与本地草稿模式，内置 Sharp 后处理管线、精灵表合成、纹理图集打包、Tiled 地图导出，以及 Unity / Godot / Phaser 等引擎的专属导出。</p>
+    </div>
+    <div class="stats reveal reveal-delay-2">
+      <div class="stat-card">
+        <div class="stat-num">8</div>
+        <div class="stat-label">素材类型</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-num">12</div>
+        <div class="stat-label">后端服务</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-num">6</div>
+        <div class="stat-label">导出目标</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-num">3</div>
+        <div class="stat-label">生成模式</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── Features ─── -->
+<section id="features">
+  <div class="section-header reveal">
+    <div class="section-number">02</div>
+    <h2 class="section-title">功能<span>模块</span></h2>
+    <p class="section-desc">从项目创建到导出打包的完整流水线。</p>
+  </div>
+
+  <div class="features-grid">
+
+    <div class="feature-card reveal reveal-delay-1">
+      <div class="feature-icon">🏗️</div>
+      <h3>项目</h3>
+      <p>创建本地目录、保存 <code>project.json</code> 配置文件、管理最近项目列表，支持多项目并行工作。</p>
+      <span class="feature-tag">projectService</span>
+    </div>
+
+    <div class="feature-card reveal reveal-delay-2">
+      <div class="feature-icon">⚡</div>
+      <h3>生成</h3>
+      <p>调用 OpenAI 兼容图片接口、自定义接口或本地草稿模式，支持文生图与图生图，内置重试与限流处理。</p>
+      <span class="feature-tag">aiService + generationService</span>
+    </div>
+
+    <div class="feature-card reveal reveal-delay-3">
+      <div class="feature-icon">🔄</div>
+      <h3>图生图</h3>
+      <p>上传参考图或复用已有素材，按主体 / 风格 / 构图 / 色板生成变体，支持蒙版局部替换编辑。</p>
+      <span class="feature-tag">referenceService</span>
+    </div>
+
+    <div class="feature-card reveal reveal-delay-1">
+      <div class="feature-icon">✨</div>
+      <h3>后处理</h3>
+      <p>Sharp 驱动的图像管线：透明背景、智能裁切、边缘伪影移除、统一尺寸、居中锚定，全本地执行。</p>
+      <span class="feature-tag">imageService</span>
+    </div>
+
+    <div class="feature-card reveal reveal-delay-2">
+      <div class="feature-icon">🎞️</div>
+      <h3>动画精灵表</h3>
+      <p>角色动作帧合成精灵表，生成帧坐标元数据与动画定义（帧率、循环），支持帧诊断分析。</p>
+      <span class="feature-tag">spriteSheetService</span>
+    </div>
+
+    <div class="feature-card reveal reveal-delay-5">
+      <div class="feature-icon">🧩</div>
+      <h3>瓦片集</h3>
+      <p>按类型生成瓦片、合成瓦片集 PNG、生成预览图与元数据，导出 Tiled TMX 地图文件。</p>
+      <span class="feature-tag">tileSetService</span>
+    </div>
+
+    <div class="feature-card reveal reveal-delay-3">
+      <div class="feature-icon">📦</div>
+      <h3>纹理图集</h3>
+      <p>贪心行排列算法合成纹理图集，输出 JSON 帧元数据，支持自定义间距。</p>
+      <span class="feature-tag">atlasService</span>
+    </div>
+
+    <div class="feature-card reveal reveal-delay-4">
+      <div class="feature-icon">📤</div>
+      <h3>导出打包</h3>
+      <p>按目标引擎整理导出目录、生成导入指南与元数据，可选 ZIP 完整归档。</p>
+      <span class="feature-tag">exportService</span>
+    </div>
+
+    <div class="feature-card reveal reveal-delay-5">
+      <div class="feature-icon">📜</div>
+      <h3>生成历史</h3>
+      <p>保存完整生成记录（提示词、参数、输出文件），支持按类型筛选与回顾，上限 200 条。</p>
+      <span class="feature-tag">historyService</span>
+    </div>
+
+  </div>
+</section>
+
+<!-- ─── Architecture ─── -->
+<section id="architecture">
+  <div class="section-header reveal">
+    <div class="section-number">03</div>
+    <h2 class="section-title">系统<span>架构</span></h2>
+    <p class="section-desc">标准 Electron 三进程架构，IPC 通信，上下文隔离。</p>
+  </div>
+
+  <div class="arch-diagram reveal">
+    <div class="arch-node main">
+      <h4>Main Process</h4>
+      <div class="arch-badge">Node.js 运行环境</div>
+      <p>窗口管理 · IPC 注册<br>12 个后端服务</p>
+      <div class="tech-list">
+        <span>Sharp</span><span>JSZip</span><span>fs-extra</span>
+      </div>
+    </div>
+    <div class="arch-arrow">▶</div>
+    <div class="arch-node preload">
+      <h4>Preload</h4>
+      <div class="arch-badge">contextBridge</div>
+      <p>类型安全 IPC 封装<br><code>window.aiSpriteStudio</code></p>
+      <div class="tech-list">
+        <span>contextIsolation</span><span>ipcRenderer</span>
+      </div>
+    </div>
+    <div class="arch-arrow">▶</div>
+    <div class="arch-node renderer">
+      <h4>Renderer</h4>
+      <div class="arch-badge">React 18 · Vite</div>
+      <p>7 个页面 · 18 个组件<br>中英文 i18n · Lucide 图标</p>
+      <div class="tech-list">
+        <span>React</span><span>TypeScript</span><span>i18next</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="reveal" style="margin-top:32px">
+    <div class="code-block" data-lang="typescript">
+<code><span class="code-comment">// src/preload/index.ts — contextBridge 示例</span>
+<span class="code-keyword">import</span> { contextBridge, ipcRenderer } <span class="code-keyword">from</span> <span class="code-string">"electron"</span>;
+
+contextBridge.exposeInMainWorld(<span class="code-string">"topspeedBuilder"</span>, {
+  createProject:     (input) => ipcRenderer.invoke(<span class="code-string">"project:create"</span>, input),
+  generateAsset:     (input) => ipcRenderer.invoke(<span class="code-string">"asset:generate"</span>, input),
+  openProject:       (path)  => ipcRenderer.invoke(<span class="code-string">"project:open"</span>, path),
+  <span class="code-comment">// ... 完整类型安全 API</span>
+});
+</code>
+    </div>
+  </div>
+</section>
+
+<!-- ─── Services ─── -->
+<section id="services">
+  <div class="section-header reveal">
+    <div class="section-number">04</div>
+    <h2 class="section-title">后端<span>服务</span></h2>
+    <p class="section-desc">Main Process 中的 12 个 TypeScript 服务模块。</p>
+  </div>
+
+  <div class="services-grid">
+
+    <div class="service-card reveal reveal-delay-1">
+      <h4>ProjectService</h4>
+      <div class="service-file">projectService.ts</div>
+      <p>项目 CRUD：创建目录结构、读写 project.json、管理最近项目列表（上限 12）</p>
+    </div>
+
+    <div class="service-card reveal reveal-delay-2">
+      <h4>SettingsService</h4>
+      <div class="service-file">settingsService.ts</div>
+      <p>应用设置持久化：AI 提供商、API 密钥/地址/模型、默认路径与后处理开关</p>
+    </div>
+
+    <div class="service-card reveal reveal-delay-3">
+      <h4>AIService</h4>
+      <div class="service-file">aiService.ts</div>
+      <p>三大生成模式：OpenAI 官方接口、自定义兼容接口、本地占位草稿（Sharp + SVG）</p>
+    </div>
+
+    <div class="service-card reveal reveal-delay-4">
+      <h4>GenerationService</h4>
+      <div class="service-file">generationService.ts</div>
+      <p>生成编排中枢：按素材类型路由、批量生成、帧诊断、精灵表合成、瓦片集组合</p>
+    </div>
+
+    <div class="service-card reveal reveal-delay-1">
+      <h4>ImageService</h4>
+      <div class="service-file">imageService.ts</div>
+      <p>Sharp 后处理管线：透明背景、智能裁切、边缘伪影移除、尺寸归一化</p>
+    </div>
+
+    <div class="service-card reveal reveal-delay-2">
+      <h4>SpriteSheetService</h4>
+      <div class="service-file">spriteSheetService.ts</div>
+      <p>精灵表合成：帧排列、坐标元数据、动画定义（FPS / 循环）</p>
+    </div>
+
+    <div class="service-card reveal reveal-delay-5">
+      <h4>AtlasService</h4>
+      <div class="service-file">atlasService.ts</div>
+      <p>纹理图集打包：贪心行排列算法、JSON 帧元数据输出</p>
+    </div>
+
+    <div class="service-card reveal reveal-delay-3">
+      <h4>TileSetService</h4>
+      <div class="service-file">tileSetService.ts</div>
+      <p>瓦片集组合：PNG 合成、预览图、元数据 JSON、Tiled TMX 导出</p>
+    </div>
+
+    <div class="service-card reveal reveal-delay-4">
+      <h4>ExportService</h4>
+      <div class="service-file">exportService.ts</div>
+      <p>目标引擎导出：Unity/Godot/Tiled/Phaser/Cocos/通用 + ZIP 归档 + 导入指南</p>
+    </div>
+
+    <div class="service-card reveal reveal-delay-1">
+      <h4>HistoryService</h4>
+      <div class="service-file">historyService.ts</div>
+      <p>生成历史：200 条上限、JSON 持久化、单条记录文件保存</p>
+    </div>
+
+    <div class="service-card reveal reveal-delay-5">
+      <h4>ReferenceService</h4>
+      <div class="service-file">referenceService.ts</div>
+      <p>参考图管理：文件对话框导入、缩略图生成、SHA-256 哈希、base64 data URL</p>
+    </div>
+
+    <div class="service-card reveal reveal-delay-2">
+      <h4>Utils</h4>
+      <div class="service-file">utils.ts</div>
+      <p>共享工具：路径解析、JSON 读写、文件名清理、Hash 计算、分块处理</p>
+    </div>
+
+  </div>
+</section>
+
+<!-- ─── Tech Stack ─── -->
+<section id="stack">
+  <div class="section-header reveal">
+    <div class="section-number">05</div>
+    <h2 class="section-title">技术<span>栈</span></h2>
+    <p class="section-desc">项目所采用的核心技术及版本。</p>
+  </div>
+
+  <div class="reveal">
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>层级</th><th>技术</th><th>版本</th></tr></thead>
+        <tbody>
+          <tr><td>桌面壳</td><td>Electron</td><td class="table-muted">33</td></tr>
+          <tr><td>前端框架</td><td>React</td><td class="table-muted">18</td></tr>
+          <tr><td>语言</td><td>TypeScript</td><td class="table-muted">5</td></tr>
+          <tr><td>构建</td><td>Vite + electron-vite</td><td class="table-muted">5 / 2.3</td></tr>
+          <tr><td>国际化</td><td>i18next + react-i18next</td><td class="table-muted">26 / 17</td></tr>
+          <tr><td>图标</td><td>Lucide React</td><td class="table-muted">0.468</td></tr>
+          <tr><td>图像处理</td><td>Sharp</td><td class="table-muted">0.33</td></tr>
+          <tr><td>归档打包</td><td>JSZip</td><td class="table-muted">3.10</td></tr>
+          <tr><td>文件系统</td><td>fs-extra</td><td class="table-muted">11.2</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ─── Export Targets ─── -->
+<section id="exports">
+  <div class="section-header reveal">
+    <div class="section-number">06</div>
+    <h2 class="section-title">导出<span>目标</span></h2>
+    <p class="section-desc">一键导出适配各引擎的素材包。</p>
+  </div>
+
+  <div class="reveal">
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>目标</th><th>内容</th></tr></thead>
+        <tbody>
+          <tr><td>Unity</td><td>PNG、精灵表、图集、JSON 元数据、导入指南</td></tr>
+          <tr><td>Godot</td><td>PNG、精灵表、SpriteFrames 资源说明、JSON 元数据、导入指南</td></tr>
+          <tr><td>Tiled</td><td>瓦片集 PNG、瓦片集 JSON、TMX 地图文件、导入指南</td></tr>
+          <tr><td>Phaser / Cocos</td><td>PNG、精灵表、图集、JSON 帧数据、README</td></tr>
+          <tr><td>通用</td><td>通用 PNG + JSON 元数据</td></tr>
+          <tr><td>ZIP</td><td>完整导出资源包压缩文件</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ─── Quick Start ─── -->
+<section id="quickstart">
+  <div class="section-header reveal">
+    <div class="section-number">07</div>
+    <h2 class="section-title">快速<span>开始</span></h2>
+    <p class="section-desc">从克隆到运行的完整流程。</p>
+  </div>
+
+  <div class="reveal">
+    <div class="code-block" data-lang="bash">
+<code><span class="code-comment"># 安装依赖</span>
+npm install
+
+<span class="code-comment"># 开发模式启动</span>
+npm run dev
+
+<span class="code-comment"># 类型检查</span>
+npm run typecheck
+
+<span class="code-comment"># 构建生产版本</span>
+npm run build
+
+<span class="code-comment"># 构建产物输出到 out/</span></code>
+    </div>
+  </div>
+
+  <div class="reveal" style="margin-top:24px">
+    <div class="code-block" data-lang="json">
+<code><span class="code-comment">// 智能生成接口最小请求体</span>
+{
+  <span class="code-string">"model"</span>: <span class="code-string">"gpt-image-1.5"</span>,
+  <span class="code-string">"prompt"</span>: <span class="code-string">"提示词文本"</span>,
+  <span class="code-string">"n"</span>: 1,
+  <span class="code-string">"size"</span>: <span class="code-string">"1024x1024"</span>
+}</code>
+    </div>
+  </div>
+</section>
+
+<!-- ─── Project Structure ─── -->
+<section id="structure">
+  <div class="section-header reveal">
+    <div class="section-number">08</div>
+    <h2 class="section-title">项目<span>结构</span></h2>
+    <p class="section-desc">本地项目的标准目录组织。</p>
+  </div>
+
+  <div class="reveal">
+    <div class="tree">
+      <span class="tree-line"><span class="tree-file">project.json</span></span>
+      <span class="tree-line"><span class="tree-dir">generated/</span></span>
+      <span class="tree-line"><span class="tree-indent">  </span><span class="tree-dir">raw/</span></span>
+      <span class="tree-line"><span class="tree-indent">  </span><span class="tree-dir">processed/</span></span>
+      <span class="tree-line"><span class="tree-dir">sprites/</span></span>
+      <span class="tree-line"><span class="tree-dir">icons/</span></span>
+      <span class="tree-line"><span class="tree-dir">tilesets/</span></span>
+      <span class="tree-line"><span class="tree-dir">sheets/</span></span>
+      <span class="tree-line"><span class="tree-dir">atlas/</span></span>
+      <span class="tree-line"><span class="tree-dir">exports/</span></span>
+      <span class="tree-line"><span class="tree-dir">history/</span></span>
+      <span class="tree-line"><span class="tree-dir">references/</span></span>
+      <span class="tree-line"><span class="tree-indent">  </span><span class="tree-dir">images/</span></span>
+      <span class="tree-line"><span class="tree-indent">  </span><span class="tree-dir">masks/</span></span>
+      <span class="tree-line"><span class="tree-indent">  </span><span class="tree-dir">thumbnails/</span></span>
+    </div>
+  </div>
+</section>
+
+</div>
+
+<!-- ═══ FOOTER ═══ -->
+<footer class="footer">
+  <p>
+    <a href="https://github.com/voicepeak/topspeed-builder">Topspeed Builder</a>
+    &nbsp;·&nbsp; MIT License &nbsp;·&nbsp; v1.1.0
+  </p>
+</footer>
+
+<script>
+// ── Sparks ──
+(function() {
+  const container = document.getElementById('sparks');
+  for (let i = 0; i < 18; i++) {
+    const el = document.createElement('div');
+    el.className = 'spark';
+    const size = 1 + Math.random() * 2;
+    el.style.width = size + 'px';
+    el.style.height = size + 'px';
+    el.style.left = Math.random() * 100 + '%';
+    el.style.animationDuration = (12 + Math.random() * 20) + 's';
+    el.style.animationDelay = (Math.random() * 15) + 's';
+    el.style.background = Math.random() > 0.6 ? 'var(--amber)' : 'var(--cyan)';
+    el.style.boxShadow = Math.random() > 0.6
+      ? '0 0 6px var(--amber), 0 0 12px var(--amber-dim)'
+      : '0 0 6px var(--cyan), 0 0 12px var(--cyan-dim)';
+    container.appendChild(el);
+  }
+})();
+
+// ── Scroll Reveal ──
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('visible');
+      observer.unobserve(entry.target);
+    }
+  });
+}, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
+
+document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+
+// ── Active Nav Highlight ──
+const navLinks = document.querySelectorAll('.nav a');
+const sections = document.querySelectorAll('section[id]');
+
+function updateNav() {
+  let current = '';
+  sections.forEach(section => {
+    const rect = section.getBoundingClientRect();
+    if (rect.top <= 120) current = section.id;
+  });
+  navLinks.forEach(link => {
+    link.classList.toggle('active', link.getAttribute('href') === '#' + current);
+  });
+}
+
+window.addEventListener('scroll', updateNav, { passive: true });
+updateNav();
+
+// ── Nav Hide on Scroll Down ──
+let lastScroll = 0;
+const nav = document.getElementById('navbar');
+window.addEventListener('scroll', () => {
+  const current = window.scrollY;
+  if (current > lastScroll && current > 200) {
+    nav.style.transform = 'translateY(-100%)';
+  } else {
+    nav.style.transform = 'translateY(0)';
+  }
+  lastScroll = current;
+}, { passive: true });
+</script>
+</body>
+</html>

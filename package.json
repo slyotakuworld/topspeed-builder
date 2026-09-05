@@ -1,0 +1,86 @@
+{
+  "name": "topspeed-builder",
+  "version": "1.1.0",
+  "description": "Topspeed Builder - local desktop workflow for generating and exporting 2D game assets.",
+  "main": "out/main/index.js",
+  "author": "Topspeed Builder",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "dev:renderer": "electron-vite --rendererOnly",
+    "start": "electron-vite preview",
+    "generate:icon": "node scripts/generate-icon.mjs",
+    "build": "npm run typecheck && electron-vite build",
+    "dist": "npm run build && electron-builder --publish never",
+    "dist:win": "npm run build && electron-builder --win --publish never",
+    "dist:mac": "npm run build && electron-builder --mac --publish never",
+    "dist:mac:arm64": "npm run build && electron-builder --mac --arm64 --publish never",
+    "dist:mac:x64": "npm run build && electron-builder --mac --x64 --publish never",
+    "dist:mac:signed:arm64": "npm run build && electron-builder --mac --arm64 -c.mac.notarize=true --publish never",
+    "dist:mac:signed:x64": "npm run build && electron-builder --mac --x64 -c.mac.notarize=true --publish never",
+    "dist:linux": "npm run build && electron-builder --linux --publish never",
+    "typecheck": "tsc --noEmit"
+  },
+  "build": {
+    "appId": "com.topspeed.builder",
+    "productName": "Topspeed Builder",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/sharp/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "docs/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Topspeed Builder",
+      "unicode": true
+    },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "icon": "docs/icon.icns",
+      "category": "public.app-category.graphics-design",
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "icon": "docs/icon.png"
+    }
+  },
+  "dependencies": {
+    "fs-extra": "^11.2.0",
+    "i18next": "^26.2.0",
+    "jszip": "^3.10.1",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-i18next": "^17.0.8",
+    "sharp": "^0.33.5"
+  },
+  "devDependencies": {
+    "@types/fs-extra": "^11.0.4",
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.17",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^33.2.1",
+    "electron-builder": "^26.8.1",
+    "electron-vite": "^2.3.0",
+    "typescript": "^5.7.2"
+  }
+}

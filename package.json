@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "dev:renderer": "electron-vite --rendererOnly",
-    "generate:icon": "node generate-icon.mjs",
+    "make-icons": "node make-icons.mjs",
     "build": "npm run typecheck && electron-vite build",
     "dist": "npm run build && electron-builder --publish never",
     "dist:win": "npm run build && electron-builder --win --publish never",

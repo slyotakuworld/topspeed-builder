@@ -41,7 +41,7 @@ npm run typecheck # TypeScript 类型检查
 npm run build     # 构建到 build/out/
 ```
 
-打包安装包（应用图标位于 `assets/`，重新生成：`generate-icon.cmd [自定义图片路径] [输出目录]`，均可在运行时交互输入；不传图则使用内置默认图案，不传目录则保存到 `assets/`；自定义图建议 1024x1024 透明背景 PNG）：
+打包安装包（应用图标位于 `assets/`，重新生成：`make-icons.cmd [自定义图片路径] [输出目录]`，均可在运行时交互输入；不传图则使用内置默认图案，不传目录则保存到 `assets/`；自定义图建议 1024x1024 透明背景 PNG）：
 
 ```bash
 npm run dist:win       # Windows NSIS 安装包，输出到 build/release/

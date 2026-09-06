@@ -40,7 +40,7 @@
           "arch": ["x64"]
         }
       ],
-      "icon": "docs/icon.ico"
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -53,13 +53,13 @@
     },
     "mac": {
       "target": ["dmg", "zip"],
-      "icon": "docs/icon.icns",
+      "icon": "build/icon.icns",
       "category": "public.app-category.graphics-design",
       "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
     },
     "linux": {
       "target": ["AppImage", "deb"],
-      "icon": "docs/icon.png"
+      "icon": "build/icon.png"
     }
   },
   "dependencies": {

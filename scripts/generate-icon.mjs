@@ -13,15 +13,15 @@ const source = Buffer.from(svg);
 const pngSizes = [16, 32, 64, 128, 256, 512, 1024];
 const pngBySize = new Map();
 
-await fs.ensureDir("docs");
+await fs.ensureDir("build");
 
 for (const iconSize of pngSizes) {
   const png = await sharp(source).resize(iconSize, iconSize).png().toBuffer();
   pngBySize.set(iconSize, png);
 }
 
-await fs.writeFile("docs/icon.png", pngBySize.get(256));
-await fs.writeFile("docs/icon.ico", createIco([
+await fs.writeFile("build/icon.png", pngBySize.get(256));
+await fs.writeFile("build/icon.ico", createIco([
   { size: 16, data: pngBySize.get(16) },
   { size: 32, data: pngBySize.get(32) },
   { size: 48, data: await sharp(source).resize(48, 48).png().toBuffer() },
@@ -29,7 +29,7 @@ await fs.writeFile("docs/icon.ico", createIco([
   { size: 128, data: pngBySize.get(128) },
   { size: 256, data: pngBySize.get(256) }
 ]));
-await fs.writeFile("docs/icon.icns", createIcns([
+await fs.writeFile("build/icon.icns", createIcns([
   { type: "icp4", data: pngBySize.get(16) },
   { type: "icp5", data: pngBySize.get(32) },
   { type: "icp6", data: pngBySize.get(64) },
@@ -39,7 +39,7 @@ await fs.writeFile("docs/icon.icns", createIcns([
   { type: "ic10", data: pngBySize.get(1024) }
 ]));
 
-console.log("Icons generated: docs/icon.png, docs/icon.ico, docs/icon.icns");
+console.log("Icons generated: build/icon.png, build/icon.ico, build/icon.icns");
 
 function createIco(images) {
   const headerSize = 6;

@@ -12,5 +12,5 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-echo Done. Icons are in assets\icon.png / icon.ico / icon.icns
+echo Done. Output paths are shown above.
 pause

@@ -5,7 +5,17 @@ import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 
 const ROOT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const OUT_DIR = path.join(ROOT_DIR, "assets");
+const DEFAULT_OUT_DIR = path.join(ROOT_DIR, "assets");
+
+function ask(question) {
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(question, (ans) => {
+      rl.close();
+      resolve(ans ?? "");
+    });
+  });
+}
 
 const size = 256;
 const svg = `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
@@ -19,18 +29,18 @@ const source = Buffer.from(svg);
 const pngSizes = [16, 32, 64, 128, 256, 512, 1024];
 const pngBySize = new Map();
 
-// 可选参数：自定义图标源图（PNG/JPG/WebP，建议 1024x1024 透明背景 PNG）
-// 用法：node assets/generate-icon.mjs [图片路径]；不传参数且为交互终端时询问，否则使用内置默认图案
+// 可选参数：[源图路径] [输出目录]
+// 用法：node generate-icon.mjs [图片路径] [输出目录]
+// 不传参数且为交互终端时逐项询问；非交互且未传参时使用内置默认图案和 assets/ 目录
 let argPath = process.argv[2];
+let argOut = process.argv[3];
 if (!argPath && process.stdin.isTTY) {
-  const answer = await new Promise((resolve) => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    rl.question("请输入自定义图标图片路径（可直接拖入文件，直接回车则使用内置默认图案）: ", (ans) => {
-      rl.close();
-      resolve(ans ?? "");
-    });
-  });
+  const answer = await ask("请输入自定义图标图片路径（可直接拖入文件，直接回车则使用内置默认图案）: ");
   argPath = (answer ?? "").trim().replace(/^\"+|\"+$/g, "");
+}
+if (!argOut && process.stdin.isTTY) {
+  const answer = await ask("请输入图标保存目录（可直接拖入文件夹，直接回车则保存到 assets/）: ");
+  argOut = (answer ?? "").trim().replace(/^\"+|\"+$/g, "");
 }
 let inputPath = null;
 if (argPath) {
@@ -41,18 +51,19 @@ if (argPath) {
   }
   inputPath = abs;
 }
+const outDir = path.resolve(argOut || DEFAULT_OUT_DIR);
 
 const loadSource = () => (inputPath ? sharp(inputPath) : sharp(source));
 
-await fs.ensureDir(OUT_DIR);
+await fs.ensureDir(outDir);
 
 for (const iconSize of pngSizes) {
   const png = await loadSource().resize(iconSize, iconSize).png().toBuffer();
   pngBySize.set(iconSize, png);
 }
 
-await fs.writeFile(path.join(OUT_DIR, "icon.png"), pngBySize.get(256));
-await fs.writeFile(path.join(OUT_DIR, "icon.ico"), createIco([
+await fs.writeFile(path.join(outDir, "icon.png"), pngBySize.get(256));
+await fs.writeFile(path.join(outDir, "icon.ico"), createIco([
   { size: 16, data: pngBySize.get(16) },
   { size: 32, data: pngBySize.get(32) },
   { size: 48, data: await loadSource().resize(48, 48).png().toBuffer() },
@@ -60,7 +71,7 @@ await fs.writeFile(path.join(OUT_DIR, "icon.ico"), createIco([
   { size: 128, data: pngBySize.get(128) },
   { size: 256, data: pngBySize.get(256) }
 ]));
-await fs.writeFile(path.join(OUT_DIR, "icon.icns"), createIcns([
+await fs.writeFile(path.join(outDir, "icon.icns"), createIcns([
   { type: "icp4", data: pngBySize.get(16) },
   { type: "icp5", data: pngBySize.get(32) },
   { type: "icp6", data: pngBySize.get(64) },
@@ -70,7 +81,7 @@ await fs.writeFile(path.join(OUT_DIR, "icon.icns"), createIcns([
   { type: "ic10", data: pngBySize.get(1024) }
 ]));
 
-console.log(`Icons generated from ${inputPath ? path.basename(inputPath) : "built-in SVG"}: assets/icon.png, assets/icon.ico, assets/icon.icns`);
+console.log(`Icons generated from ${inputPath ? path.basename(inputPath) : "built-in SVG"} -> ${outDir}\\icon.png / icon.ico / icon.icns`);
 
 function createIco(images) {
   const headerSize = 6;

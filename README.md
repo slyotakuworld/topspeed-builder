@@ -38,7 +38,7 @@
 npm install
 npm run dev       # 开发模式启动 Electron 应用
 npm run typecheck # TypeScript 类型检查
-npm run build     # 构建到 out/
+npm run build     # 构建到 build/out/
 ```
 
 生产预览：
@@ -51,7 +51,7 @@ npm start
 打包安装包（应用图标位于 `assets/`，可用 `npm run generate:icon` 重新生成）：
 
 ```bash
-npm run dist:win       # Windows NSIS 安装包，输出到 release/
+npm run dist:win       # Windows NSIS 安装包，输出到 build/release/
 npm run dist:mac:arm64 # Apple Silicon DMG/ZIP
 npm run dist:mac:x64   # Intel Mac DMG/ZIP
 npm run dist:linux     # AppImage / deb

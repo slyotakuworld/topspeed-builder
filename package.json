@@ -2,7 +2,7 @@
   "name": "topspeed-builder",
   "version": "1.1.0",
   "description": "Topspeed Builder - local desktop workflow for generating and exporting 2D game assets.",
-  "main": "out/main/index.js",
+  "main": "build/out/main/index.js",
   "author": "Topspeed Builder",
   "license": "MIT",
   "scripts": {
@@ -25,10 +25,10 @@
     "appId": "com.topspeed.builder",
     "productName": "Topspeed Builder",
     "directories": {
-      "output": "release"
+      "output": "build/release"
     },
     "files": [
-      "out/**/*"
+      "build/out/**/*"
     ],
     "asarUnpack": [
       "node_modules/sharp/**/*"

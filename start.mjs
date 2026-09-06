@@ -152,7 +152,7 @@ async function main() {
         if (!(await installDeps(force))) return;
         log(c('构建项目 (npm run build)...', 'cyan'));
         const code = await run('npm', ['run', 'build']);
-        if (code === 0) log(c('构建完成，输出在 out/ 目录。', 'green'));
+        if (code === 0) log(c('构建完成，输出在 build/out/ 目录。', 'green'));
         return;
       }
       case '4': {

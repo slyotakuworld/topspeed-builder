@@ -1,7 +1,8 @@
 node_modules/
-out/
+# 构建产物统一在 build/ 下（build/out 编译产物、build/release 安装包）
+build/
 dist/
-release/
+dist/
 *.log
 vite-renderer.out.log
 vite-renderer.err.log

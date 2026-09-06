@@ -11,6 +11,7 @@ export default defineConfig({
       }
     },
     build: {
+      outDir: resolve(__dirname, "build/out/main"),
       rollupOptions: {
         input: {
           index: resolve(__dirname, "src/main/index.ts")
@@ -26,6 +27,7 @@ export default defineConfig({
       }
     },
     build: {
+      outDir: resolve(__dirname, "build/out/preload"),
       rollupOptions: {
         input: {
           index: resolve(__dirname, "src/preload/index.ts")
@@ -36,6 +38,10 @@ export default defineConfig({
   renderer: {
     root: resolve(__dirname, "src/renderer"),
     plugins: [react()],
+    build: {
+      outDir: resolve(__dirname, "build/out/renderer"),
+      emptyOutDir: true
+    },
     resolve: {
       alias: {
         "@renderer": resolve(__dirname, "src/renderer/src"),

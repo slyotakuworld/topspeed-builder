@@ -22,10 +22,14 @@ const pngBySize = new Map();
 // 用法：node assets/generate-icon.mjs [图片路径]；不传参数且为交互终端时询问，否则使用内置默认图案
 let argPath = process.argv[2];
 if (!argPath && process.stdin.isTTY) {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const answer = await rl.question("请输入自定义图标图片路径（可直接拖入文件，直接回车则使用内置默认图案）: ");
-  rl.close();
-  argPath = answer.trim().replace(/^\"+|\"+$/g, "");
+  const answer = await new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    rl.question("请输入自定义图标图片路径（可直接拖入文件，直接回车则使用内置默认图案）: ", (ans) => {
+      rl.close();
+      resolve(ans ?? "");
+    });
+  });
+  argPath = (answer ?? "").trim().replace(/^\"+|\"+$/g, "");
 }
 let inputPath = null;
 if (argPath) {

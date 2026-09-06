@@ -6,7 +6,7 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-node assets\generate-icon.mjs %*
+node generate-icon.mjs %*
 if errorlevel 1 (
   echo Icon generation failed.
   pause

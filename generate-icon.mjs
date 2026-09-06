@@ -4,7 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 
-const OUT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const ROOT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const OUT_DIR = path.join(ROOT_DIR, "assets");
 
 const size = 256;
 const svg = `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">

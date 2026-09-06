@@ -17,10 +17,25 @@ const source = Buffer.from(svg);
 const pngSizes = [16, 32, 64, 128, 256, 512, 1024];
 const pngBySize = new Map();
 
+// 可选参数：自定义图标源图（PNG/JPG/WebP，建议 1024x1024 透明背景 PNG）
+// 用法：node assets/generate-icon.mjs [图片路径]；不传参数则使用内置默认图案
+const argPath = process.argv[2];
+let inputPath = null;
+if (argPath) {
+  const abs = path.resolve(argPath);
+  if (!fs.existsSync(abs)) {
+    console.error(`Input image not found: ${abs}`);
+    process.exit(1);
+  }
+  inputPath = abs;
+}
+
+const loadSource = () => (inputPath ? sharp(inputPath) : sharp(source));
+
 await fs.ensureDir(OUT_DIR);
 
 for (const iconSize of pngSizes) {
-  const png = await sharp(source).resize(iconSize, iconSize).png().toBuffer();
+  const png = await loadSource().resize(iconSize, iconSize).png().toBuffer();
   pngBySize.set(iconSize, png);
 }
 
@@ -28,7 +43,7 @@ await fs.writeFile(path.join(OUT_DIR, "icon.png"), pngBySize.get(256));
 await fs.writeFile(path.join(OUT_DIR, "icon.ico"), createIco([
   { size: 16, data: pngBySize.get(16) },
   { size: 32, data: pngBySize.get(32) },
-  { size: 48, data: await sharp(source).resize(48, 48).png().toBuffer() },
+  { size: 48, data: await loadSource().resize(48, 48).png().toBuffer() },
   { size: 64, data: pngBySize.get(64) },
   { size: 128, data: pngBySize.get(128) },
   { size: 256, data: pngBySize.get(256) }
@@ -43,7 +58,7 @@ await fs.writeFile(path.join(OUT_DIR, "icon.icns"), createIcns([
   { type: "ic10", data: pngBySize.get(1024) }
 ]));
 
-console.log("Icons generated: assets/icon.png, assets/icon.ico, assets/icon.icns");
+console.log(`Icons generated from ${inputPath ? path.basename(inputPath) : "built-in SVG"}: assets/icon.png, assets/icon.ico, assets/icon.icns`);
 
 function createIco(images) {
   const headerSize = 6;

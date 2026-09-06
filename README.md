@@ -41,13 +41,6 @@ npm run typecheck # TypeScript 类型检查
 npm run build     # 构建到 build/out/
 ```
 
-生产预览：
-
-```bash
-npm run build
-npm start
-```
-
 打包安装包（应用图标位于 `assets/`，可用 `npm run generate:icon` 重新生成）：
 
 ```bash

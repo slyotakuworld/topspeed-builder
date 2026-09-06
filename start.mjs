@@ -89,8 +89,7 @@ function showMenu() {
   log('  1) 安装依赖并启动开发模式 (Electron 窗口)');
   log('  2) 仅安装依赖（不启动）');
   log('  3) 安装依赖并构建 (npm run build)');
-  log('  4) 安装依赖并生产预览 (electron-vite preview)');
-  log('  5) 退出');
+  log('  4) 退出');
   log(c('================================================', 'cyan'));
   log('  提示：开发模式下会直接打开桌面应用窗口，无需打开浏览器。');
   log('');
@@ -134,7 +133,7 @@ async function main() {
   // 3. 启动菜单
   while (true) {
     showMenu();
-    const choice = await ask(c('请选择操作 [1-5]: ', 'cyan'));
+    const choice = await ask(c('请选择操作 [1-4]: ', 'cyan'));
     log('');
     switch (choice) {
       case '1': {
@@ -156,18 +155,11 @@ async function main() {
         return;
       }
       case '4': {
-        if (!(await installDeps(force))) return;
-        log(c('构建并启动生产预览 (npm start)...', 'cyan'));
-        const code = await run('npm', ['run', 'build']);
-        if (code === 0) await run('npm', ['run', 'start']);
-        return;
-      }
-      case '5': {
         log(c('已退出。', 'green'));
         return;
       }
       default: {
-        log(c('无效选择，请输入 1-5。', 'red'));
+        log(c('无效选择，请输入 1-4。', 'red'));
       }
     }
   }

@@ -9,7 +9,7 @@
     "dev": "electron-vite dev",
     "dev:renderer": "electron-vite --rendererOnly",
     "start": "electron-vite preview",
-    "generate:icon": "node scripts/generate-icon.mjs",
+    "generate:icon": "node assets/generate-icon.mjs",
     "build": "npm run typecheck && electron-vite build",
     "dist": "npm run build && electron-builder --publish never",
     "dist:win": "npm run build && electron-builder --win --publish never",
@@ -40,7 +40,7 @@
           "arch": ["x64"]
         }
       ],
-      "icon": "build/icon.ico"
+      "icon": "assets/icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -53,13 +53,13 @@
     },
     "mac": {
       "target": ["dmg", "zip"],
-      "icon": "build/icon.icns",
+      "icon": "assets/icon.icns",
       "category": "public.app-category.graphics-design",
       "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
     },
     "linux": {
       "target": ["AppImage", "deb"],
-      "icon": "build/icon.png"
+      "icon": "assets/icon.png"
     }
   },
   "dependencies": {

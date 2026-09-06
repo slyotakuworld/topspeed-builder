@@ -1,5 +1,9 @@
 import sharp from "sharp";
 import fs from "fs-extra";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const OUT_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 const size = 256;
 const svg = `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
@@ -13,15 +17,15 @@ const source = Buffer.from(svg);
 const pngSizes = [16, 32, 64, 128, 256, 512, 1024];
 const pngBySize = new Map();
 
-await fs.ensureDir("build");
+await fs.ensureDir(OUT_DIR);
 
 for (const iconSize of pngSizes) {
   const png = await sharp(source).resize(iconSize, iconSize).png().toBuffer();
   pngBySize.set(iconSize, png);
 }
 
-await fs.writeFile("build/icon.png", pngBySize.get(256));
-await fs.writeFile("build/icon.ico", createIco([
+await fs.writeFile(path.join(OUT_DIR, "icon.png"), pngBySize.get(256));
+await fs.writeFile(path.join(OUT_DIR, "icon.ico"), createIco([
   { size: 16, data: pngBySize.get(16) },
   { size: 32, data: pngBySize.get(32) },
   { size: 48, data: await sharp(source).resize(48, 48).png().toBuffer() },
@@ -29,7 +33,7 @@ await fs.writeFile("build/icon.ico", createIco([
   { size: 128, data: pngBySize.get(128) },
   { size: 256, data: pngBySize.get(256) }
 ]));
-await fs.writeFile("build/icon.icns", createIcns([
+await fs.writeFile(path.join(OUT_DIR, "icon.icns"), createIcns([
   { type: "icp4", data: pngBySize.get(16) },
   { type: "icp5", data: pngBySize.get(32) },
   { type: "icp6", data: pngBySize.get(64) },
@@ -39,7 +43,7 @@ await fs.writeFile("build/icon.icns", createIcns([
   { type: "ic10", data: pngBySize.get(1024) }
 ]));
 
-console.log("Icons generated: build/icon.png, build/icon.ico, build/icon.icns");
+console.log("Icons generated: assets/icon.png, assets/icon.ico, assets/icon.icns");
 
 function createIco(images) {
   const headerSize = 6;

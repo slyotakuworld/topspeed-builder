@@ -48,7 +48,7 @@ npm run build
 npm start
 ```
 
-打包安装包（应用图标位于 `build/`，可用 `npm run generate:icon` 重新生成）：
+打包安装包（应用图标位于 `assets/`，可用 `npm run generate:icon` 重新生成）：
 
 ```bash
 npm run dist:win       # Windows NSIS 安装包，输出到 release/

@@ -1,11 +1,3 @@
-<p align="center">
-  <img src="https://img.shields.io/badge/topspeed--builder-v1.1.0-00d4ff?style=flat-square&labelColor=0b0e11" alt="版本">
-  <img src="https://img.shields.io/badge/Electron-33.x-47848f?style=flat-square&logo=electron&logoColor=white" alt="Electron">
-  <img src="https://img.shields.io/badge/React-18.x-58c4dc?style=flat-square&logo=react&logoColor=white" alt="React">
-  <img src="https://img.shields.io/badge/TypeScript-5.x-3178c6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript">
-  <img src="https://img.shields.io/badge/license-MIT-8a9aa8?style=flat-square" alt="MIT 协议">
-</p>
-
 # Topspeed Builder
 
 本地桌面端 AI 2D 游戏素材工程化生成工具。把 AI 生成结果从"好看的图片"整理成可直接导入 Unity、Godot、Tiled、Phaser 和 Cocos 的素材包。
@@ -151,10 +143,6 @@ references/
 | 图像处理 | Sharp |
 | 归档导出 | JSZip |
 | 本地存储 | JSON 文件、项目目录、Electron userData |
-
-## 相关文档
-
-- [产品 PRD](./topspeed-builder-PRD.md)
 
 ## License
 

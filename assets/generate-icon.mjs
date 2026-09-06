@@ -2,6 +2,7 @@ import sharp from "sharp";
 import fs from "fs-extra";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createInterface } from "node:readline";
 
 const OUT_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -18,13 +19,19 @@ const pngSizes = [16, 32, 64, 128, 256, 512, 1024];
 const pngBySize = new Map();
 
 // 可选参数：自定义图标源图（PNG/JPG/WebP，建议 1024x1024 透明背景 PNG）
-// 用法：node assets/generate-icon.mjs [图片路径]；不传参数则使用内置默认图案
-const argPath = process.argv[2];
+// 用法：node assets/generate-icon.mjs [图片路径]；不传参数且为交互终端时询问，否则使用内置默认图案
+let argPath = process.argv[2];
+if (!argPath && process.stdin.isTTY) {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await rl.question("请输入自定义图标图片路径（可直接拖入文件，直接回车则使用内置默认图案）: ");
+  rl.close();
+  argPath = answer.trim().replace(/^\"+|\"+$/g, "");
+}
 let inputPath = null;
 if (argPath) {
   const abs = path.resolve(argPath);
   if (!fs.existsSync(abs)) {
-    console.error(`Input image not found: ${abs}`);
+    console.error(`图片不存在: ${abs}`);
     process.exit(1);
   }
   inputPath = abs;

@@ -6,4 +6,6 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
+rem Remove leftover electron-vite temp config files (created when a build was interrupted)
+del /Q electron.vite.config.*.mjs >nul 2>&1
 node start.mjs %**

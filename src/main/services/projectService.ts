@@ -1,43 +1,26 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { app, dialog } from "electron";
 import fs from "fs-extra";
 import type { CreateProjectInput, Project, RecentProject, StyleTemplate } from "@shared/types";
 import {
   ensureProjectDirectories,
   nowIso,
-  readJsonFile,
   resolveProjectPath,
   sanitizeFileName,
-  uniqueByPath,
   withFileLock,
   writeJsonFile
 } from "./utils";
 import { SettingsService } from "./settingsService";
 
 export class ProjectService {
-  private readonly recentPath: string;
-
-  constructor(private readonly settingsService: SettingsService) {
-    this.recentPath = path.join(app.getPath("userData"), "recent-projects.json");
-  }
-
-  async chooseProjectRoot(): Promise<string> {
-    const result = await dialog.showOpenDialog({
-      title: "选择项目父目录",
-      properties: ["openDirectory", "createDirectory"]
-    });
-
-    if (result.canceled || result.filePaths.length === 0) {
-      throw new Error("已取消选择目录");
-    }
-
-    return result.filePaths[0];
-  }
+  constructor(private readonly settingsService: SettingsService) {}
 
   async createProject(input: CreateProjectInput): Promise<Project> {
     const settings = await this.settingsService.getSettings();
-    const parentDirectory = input.parentDirectory?.trim() || settings.defaultProjectRoot;
+    const parentDirectory = settings.defaultProjectRoot.trim();
+    if (!parentDirectory) {
+      throw new Error("未配置默认项目目录：请先在设置页选择项目目录后再创建项目。");
+    }
     const projectPath = path.join(parentDirectory, sanitizeFileName(input.name));
 
     if (await fs.pathExists(path.join(projectPath, "project.json"))) {
@@ -51,12 +34,9 @@ export class ProjectService {
       id: randomUUID(),
       name: input.name.trim() || "未命名项目",
       path: projectPath,
-      gameType: input.gameType,
-      style: input.style,
-      styleDescription: input.style,
-      defaultResolution: input.defaultResolution,
-      defaultBackground: input.defaultBackground,
-      exportTargets: input.exportTargets,
+      gameType: "其他",
+      style: "十六位像素风",
+      styleDescription: "十六位像素美术，轮廓干净，限制色板，透明背景",
       assets: [],
       styleTemplates: [
         {
@@ -84,20 +64,6 @@ export class ProjectService {
     return project;
   }
 
-  async openProjectDialog(): Promise<Project> {
-    const result = await dialog.showOpenDialog({
-      title: "打开 Topspeed Builder 项目",
-      filters: [{ name: "Topspeed Builder 项目", extensions: ["json"] }],
-      properties: ["openFile"]
-    });
-
-    if (result.canceled || result.filePaths.length === 0) {
-      throw new Error("已取消打开项目");
-    }
-
-    return this.openProjectPath(result.filePaths[0]);
-  }
-
   async openProjectPath(inputPath: string): Promise<Project> {
     const projectJsonPath = this.projectJsonPath(inputPath);
 
@@ -123,7 +89,6 @@ export class ProjectService {
 
     await ensureProjectDirectories(nextProject.path);
     await writeJsonFile(path.join(nextProject.path, "project.json"), nextProject);
-    await this.addRecent(nextProject);
     return nextProject;
   }
 
@@ -143,27 +108,44 @@ export class ProjectService {
     });
   }
 
-  async getRecentProjects(): Promise<RecentProject[]> {
-    return withFileLock(this.recentPath, async () => {
-      const recent = await readJsonFile<RecentProject[]>(this.recentPath, []);
-      const existing: RecentProject[] = [];
+  /** 扫描默认项目目录一层子目录下的全部项目，按最近更新/打开时间倒序 */
+  async listDiscoverableProjects(): Promise<RecentProject[]> {
+    const settings = await this.settingsService.getSettings();
+    const root = settings.defaultProjectRoot.trim();
+    if (!root) return [];
+    return this.scanProjectRoot(path.resolve(root));
+  }
 
-      for (const item of recent) {
-        if (await fs.pathExists(path.join(item.path, "project.json"))) {
-          existing.push({
-            ...item,
-            name: this.translateLegacyDefault(item.name),
-            style: this.translateLegacyDefault(item.style)
+  private async scanProjectRoot(root: string): Promise<RecentProject[]> {
+    try {
+      if (!(await fs.pathExists(root))) return [];
+      const entries = await fs.readdir(root, { withFileTypes: true });
+      const projects: RecentProject[] = [];
+
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const projectDir = path.join(root, entry.name);
+        const projectJsonPath = path.join(projectDir, "project.json");
+        if (!(await fs.pathExists(projectJsonPath))) continue;
+        try {
+          const project = await this.readNormalizedProject(projectJsonPath);
+          projects.push({
+            id: project.id,
+            name: project.name,
+            path: project.path,
+            gameType: project.gameType,
+            style: project.style,
+            updatedAt: project.updatedAt
           });
+        } catch {
+          // 单个损坏的 project.json 跳过，不影响其余项目
         }
       }
 
-      if (existing.length !== recent.length) {
-        await writeJsonFile(this.recentPath, existing);
-      }
-
-      return existing;
-    });
+      return projects.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    } catch {
+      return [];
+    }
   }
 
   async deleteAsset(projectPath: string, assetId: string): Promise<Project> {
@@ -171,45 +153,12 @@ export class ProjectService {
       const project = await this.readNormalizedProject(this.projectJsonPath(projectPath));
       const asset = project.assets.find((a) => a.id === assetId);
       if (asset) {
-        const allPaths = [
-          ...asset.files,
-          asset.metadataPath,
-          asset.atlasPath,
-          asset.sheetPath
-        ].filter(Boolean) as string[];
+        const allPaths = [...asset.files, asset.metadataPath].filter(Boolean) as string[];
         for (const file of allPaths) {
           try { await fs.remove(resolveProjectPath(project.path, file)); } catch { /* may not exist */ }
         }
       }
       return this.saveProjectUnlocked({ ...project, assets: project.assets.filter((a) => a.id !== assetId) });
-    });
-  }
-
-  async removeRecentProject(projectPath: string): Promise<RecentProject[]> {
-    return withFileLock(this.recentPath, async () => {
-      const recent = await readJsonFile<RecentProject[]>(this.recentPath, []);
-      const next = recent.filter((item) => path.normalize(item.path) !== path.normalize(projectPath));
-      await writeJsonFile(this.recentPath, next);
-      return next;
-    });
-  }
-
-  private async addRecent(project: Project): Promise<void> {
-    await withFileLock(this.recentPath, async () => {
-      const recent = await readJsonFile<RecentProject[]>(this.recentPath, []);
-      const next = uniqueByPath([
-        {
-          id: project.id,
-          name: project.name,
-          path: project.path,
-          gameType: project.gameType,
-          style: project.style,
-          updatedAt: nowIso()
-        },
-        ...recent
-      ]).slice(0, 12);
-
-      await writeJsonFile(this.recentPath, next);
     });
   }
 
@@ -225,12 +174,9 @@ export class ProjectService {
       id: project.id ?? randomUUID(),
       name: this.translateLegacyDefault(project.name ?? project.projectName ?? "未命名项目"),
       path: path.dirname(projectJsonPath),
-      gameType: project.gameType ?? "RPG",
+      gameType: project.gameType ?? "其他",
       style: this.translateLegacyDefault(project.style ?? "十六位像素风"),
       styleDescription: this.translateLegacyDefault(project.styleDescription ?? project.style ?? ""),
-      defaultResolution: project.defaultResolution ?? "64x64",
-      defaultBackground: project.defaultBackground ?? "transparent",
-      exportTargets: project.exportTargets ?? ["common"],
       assets: project.assets ?? [],
       styleTemplates: this.normalizeStyleTemplates(project.styleTemplates ?? []),
       createdAt: project.createdAt ?? nowIso(),

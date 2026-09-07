@@ -1,46 +1,33 @@
 import path from "node:path";
 import fs from "fs-extra";
-import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import type {
   AppSettings,
   CreateProjectInput,
-  ExportProjectInput,
   GenerateAssetInput,
+  GridDraft,
+  GridSliceOptions,
   IpcResponse,
   Project
 } from "@shared/types";
 import { AIGenerationService } from "./services/aiService";
-import { AtlasPackingService } from "./services/atlasService";
-import { ExportService } from "./services/exportService";
 import { GenerationService } from "./services/generationService";
-import { HistoryService } from "./services/historyService";
 import { ImageProcessingService } from "./services/imageService";
 import { ProjectService } from "./services/projectService";
 import { ReferenceService } from "./services/referenceService";
 import { SettingsService } from "./services/settingsService";
-import { SpriteSheetService } from "./services/spriteSheetService";
-import { TileSetService } from "./services/tileSetService";
-import { resolveProjectPath } from "./services/utils";
+import { resolveProjectPath, sanitizeFileName } from "./services/utils";
 
 const settingsService = new SettingsService();
 const projectService = new ProjectService(settingsService);
 const referenceService = new ReferenceService();
 const aiService = new AIGenerationService();
 const imageService = new ImageProcessingService();
-const spriteSheetService = new SpriteSheetService();
-const atlasService = new AtlasPackingService();
-const tileSetService = new TileSetService();
-const historyService = new HistoryService();
-const exportService = new ExportService();
 const generationService = new GenerationService(
   settingsService,
   projectService,
   aiService,
-  imageService,
-  spriteSheetService,
-  atlasService,
-  tileSetService,
-  historyService
+  imageService
 );
 
 function createWindow(): void {
@@ -68,28 +55,44 @@ function createWindow(): void {
 
 function registerIpc(): void {
   handle("project:create", (input: CreateProjectInput) => projectService.createProject(input));
-  handle("project:chooseRoot", () => projectService.chooseProjectRoot());
-  handle("project:openDialog", () => projectService.openProjectDialog());
   handle("project:openPath", (projectPath: string) => projectService.openProjectPath(projectPath));
   handle("project:save", (project: Project) => projectService.saveProject(project));
-  handle("project:recent", () => projectService.getRecentProjects());
-  handle("project:removeRecent", (projectPath: string) => projectService.removeRecentProject(projectPath));
+  handle("project:listDiscoverable", () => projectService.listDiscoverableProjects());
 
   handle("settings:get", () => settingsService.getSettings());
   handle("settings:save", (settings: AppSettings) => settingsService.saveSettings(settings));
   handle("settings:testConnection", (settings: AppSettings) => aiService.testConnection(settings));
   handle("settings:fetchModels", (settings: AppSettings) => aiService.fetchModels(settings));
+  handle("dialog:chooseDirectory", async (title: string, defaultPath: string) => {
+    const result = await dialog.showOpenDialog({
+      title: title || "选择目录",
+      defaultPath: defaultPath || undefined,
+      properties: ["openDirectory", "createDirectory"]
+    });
+    return result.canceled || result.filePaths.length === 0 ? "" : result.filePaths[0];
+  });
 
   handle("project:deleteAsset", (projectPath: string, assetId: string) => projectService.deleteAsset(projectPath, assetId));
   handle("reference:chooseImages", (projectPath: string) => referenceService.chooseReferenceImages(projectPath));
-  handle("reference:chooseMask", (projectPath: string) => referenceService.chooseMask(projectPath));
 
-  handle("generate:assets", (input: GenerateAssetInput) => generationService.generate(input));
-  handle("history:get", (projectPath: string) => historyService.getHistory(projectPath));
-
-  handle("export:project", async (input: ExportProjectInput) => {
-    const project = await projectService.openProjectPath(input.projectPath);
-    return exportService.exportProject(project, input);
+  handle("generate:grid", (input: GenerateAssetInput) => generationService.generateGrid(input));
+  handle("generate:commit", (input: GenerateAssetInput, draft: GridDraft, options: GridSliceOptions) =>
+    generationService.commitSlice(input, draft, options)
+  );
+  handle("export:copyPng", async (projectPath: string) => {
+    const project = await projectService.openProjectPath(projectPath);
+    const settings = await settingsService.getSettings();
+    const destination = settings.defaultExportDirectory.trim();
+    if (!destination) {
+      throw new Error("未配置默认导出目录：请先在设置页选择导出目录。");
+    }
+    const sourceDirectory = path.join(project.path, "sprites");
+    if (!(await fs.pathExists(sourceDirectory))) {
+      throw new Error("项目里还没有可导出的素材。");
+    }
+    const targetDirectory = path.join(destination, sanitizeFileName(project.name), "sprites");
+    await fs.copy(sourceDirectory, targetDirectory, { overwrite: true });
+    return targetDirectory;
   });
 
   handle("image:dataUrl", async (projectPath: string, filePath: string) => {

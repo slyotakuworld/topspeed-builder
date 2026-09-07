@@ -46,6 +46,11 @@ export class ImageProcessingService {
     return this.removeFlatBackground(input);
   }
 
+  /** 公开：裁掉透明区域之外的空白边，供网格单格清理使用 */
+  async trimToContent(input: Buffer): Promise<Buffer> {
+    return this.trimTransparent(input);
+  }
+
   async normalizeFramesConsistently(inputs: Buffer[], options: ProcessImageOptions): Promise<Buffer[]> {
     const prepared = await Promise.all(inputs.map((input) => this.prepareForeground(input, options)));
     if (!options.trim) {

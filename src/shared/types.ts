@@ -4,26 +4,16 @@ export type AssetType =
   | "icon"
   | "item"
   | "ui"
-  | "tileset"
   | "background"
   | "effect";
 
-export type ExportTarget = "unity" | "godot" | "tiled" | "phaser" | "cocos" | "common";
-export type GenerationMode = "text-to-image" | "image-to-image";
+export type GenerationQuality = "low" | "medium" | "high";
 export type ReferenceImageRole = "subject" | "style" | "composition" | "palette";
-export type EditIntent = "preserve-subject" | "preserve-style" | "preserve-composition" | "same-series" | "inpaint";
 export type ReferenceStrength = "low" | "medium" | "high";
 
 export interface Size {
   width: number;
   height: number;
-}
-
-export interface AnimationConfig {
-  name: string;
-  frames: number;
-  fps: number;
-  loop: boolean;
 }
 
 export interface ReferenceImageInput {
@@ -52,13 +42,8 @@ export interface Asset {
   size: Size;
   files: string[];
   metadataPath?: string;
-  atlasPath?: string;
-  sheetPath?: string;
-  generationMode?: GenerationMode;
   referenceImages?: ReferenceImageInput[];
-  maskImagePath?: string;
   prompt: string;
-  exportTargets: ExportTarget[];
   createdAt: string;
   updatedAt: string;
 }
@@ -80,9 +65,6 @@ export interface Project {
   gameType: string;
   style: string;
   styleDescription: string;
-  defaultResolution: string;
-  defaultBackground: "transparent" | "solid" | "custom";
-  exportTargets: ExportTarget[];
   assets: Asset[];
   styleTemplates: StyleTemplate[];
   createdAt: string;
@@ -98,123 +80,77 @@ export interface RecentProject {
   updatedAt: string;
 }
 
-export type AIProvider = "openai" | "custom" | "local-draft";
-export type CustomApiFormat = "openai-image" | "openai-chat";
-
 export interface AppSettings {
-  aiProvider: AIProvider;
-  customApiFormat: CustomApiFormat;
   apiKey: string;
   apiBaseUrl: string;
   model: string;
   availableModels: string[];
   defaultProjectRoot: string;
   defaultExportDirectory: string;
-  defaultImageSize: string;
-  defaultGenerationCount: number;
-  savePromptHistory: boolean;
-  autoTransparent: boolean;
-  autoTrim: boolean;
-  autoPackAtlas: boolean;
-  generationQuality: "low" | "medium" | "high";
 }
 
 export interface CreateProjectInput {
   name: string;
-  parentDirectory?: string;
-  gameType: string;
-  style: string;
-  defaultResolution: string;
-  defaultBackground: Project["defaultBackground"];
-  exportTargets: ExportTarget[];
 }
 
+/**
+ * 一次生成 = 让 AI 画一张包含多个独立素材的大图（自动网格），
+ * 再由工具按网格裁成多个独立 PNG。
+ */
 export interface GenerateAssetInput {
   projectPath: string;
-  generationMode: GenerationMode;
   assetType: AssetType;
+  /** 批次名 / 输出前缀（不带序号） */
   name: string;
+  /** 对整张图要出现的内容做整体描述 */
   description: string;
   detailPrompt: string;
+  /** 参考图：仅作为统一风格/角色/色板的参考 */
   referenceImages: ReferenceImageInput[];
-  editIntent: EditIntent;
   referenceStrength: ReferenceStrength;
-  maskImagePath?: string;
+  /** 整张大图画布，格式如 1024x1024 */
   size: string;
+  /** 网格内素材数量（自动推导列×行） */
   count: number;
+  /** 可选：按网格顺序（行优先）给每个素材命名，长度可与 count 不同 */
+  cellNames: string[];
+  quality: GenerationQuality;
+  /** 本次出图使用的美术风格文本（生成页预设或自定义描述）；为空时回退项目旧风格字段 */
+  style: string;
   transparentBackground: boolean;
-  exportTargets: ExportTarget[];
-  iconItems: string[];
-  makeAtlas: boolean;
-  characterView: string;
-  animations: AnimationConfig[];
-  makeSpriteSheet: boolean;
-  tileTheme: string;
-  tileTypes: string[];
-  tileSeamless: boolean;
-  makeTiled: boolean;
+  trimEdges: boolean;
+}
+
+/** generate:grid 产出的“大图草稿”，等待用户在界面确认切分参数后提交 */
+export interface GridDraft {
+  runId: string;
+  gridImagePath: string;
+  width: number;
+  height: number;
+  cols: number;
+  rows: number;
+  count: number;
+  prompt: string;
+  logs: string[];
+}
+
+export interface GridSliceOptions {
+  cols: number;
+  rows: number;
+  /** 相对默认网格整体水平偏移（像素） */
+  shiftX?: number;
+  /** 相对默认网格整体垂直偏移（像素） */
+  shiftY?: number;
+  /** 每格安全边距（每侧占短边的百分比，0-30），用于裁掉格子边缘干扰 */
+  shrinkPercent?: number;
 }
 
 export interface GeneratedAssetResult {
   asset: Asset;
   files: string[];
   metadataPath?: string;
-  atlasPath?: string;
-  sheetPath?: string;
-  previewPath?: string;
-  tmxPath?: string;
+  gridImagePath?: string;
   logs: string[];
-}
-
-export interface GenerationHistoryRecord {
-  id: string;
-  createdAt: string;
-  assetType: AssetType;
-  prompt: string;
-  parameters: GenerateAssetInput;
-  style: string;
-  outputFiles: string[];
-  exportTargets: ExportTarget[];
-  favorite: boolean;
-  exported: boolean;
-}
-
-export interface ExportProjectInput {
-  projectPath: string;
-  targets: ExportTarget[];
-  includeZip: boolean;
-}
-
-export interface ExportProjectResult {
-  exportRoot: string;
-  targets: string[];
-  files: string[];
-  zipPath?: string;
-}
-
-export interface SpriteSheetMetadata {
-  character?: string;
-  frameSize: Size;
-  sheet: string;
-  frames: Array<{
-    name: string;
-    animation: string;
-    index: number;
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-  }>;
-  animations: Record<string, { frames: number[]; fps: number; loop: boolean }>;
-}
-
-export interface AtlasMetadata {
-  meta: {
-    image: string;
-    size: { w: number; h: number };
-    padding: number;
-  };
-  frames: Record<string, { frame: { x: number; y: number; w: number; h: number } }>;
 }
 
 export interface IpcResponse<T> {

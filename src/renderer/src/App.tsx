@@ -1,21 +1,15 @@
 import { useTranslation } from "react-i18next";
 import i18n, { switchLanguage } from "./i18n";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Archive,
   Boxes,
-  Brush,
   Check,
-  Clapperboard,
   Download,
   FolderOpen,
-  Gauge,
-  History,
   Home,
   Image,
   Loader2,
-  Package,
-  Pause,
   Play,
   Plus,
   RefreshCw,
@@ -23,55 +17,32 @@ import {
   Settings,
   Sparkles,
   Trash2,
-  Wand2
+  Wand2,
+  X
 } from "lucide-react";
 import type {
-  AnimationConfig,
   AppSettings,
   Asset,
   AssetType,
   CreateProjectInput,
-  EditIntent,
-  ExportTarget,
   GenerateAssetInput,
   GeneratedAssetResult,
-  GenerationMode,
-  GenerationHistoryRecord,
+  GenerationQuality,
+  GridDraft,
+  GridSliceOptions,
   ImportedReferenceImage,
   IpcResponse,
   Project,
+  RecentProject,
   ReferenceImageInput,
   ReferenceImageRole,
-  ReferenceStrength,
-  RecentProject,
-  StyleTemplate
+  ReferenceStrength
 } from "@shared/types";
 
-type Page = "home" | "project" | "generate" | "preview" | "export" | "history" | "settings";
+type Page = "home" | "generate" | "assets" | "settings";
 type DetailTemplate = { id: string; name: string; prompt: string; meta: string };
 type ReferenceDraft = ReferenceImageInput & Partial<Pick<ImportedReferenceImage, "width" | "height" | "bytes" | "hash" | "thumbnailPath" | "dataUrl">>;
 type SelectOption = string | { value: string; label: string };
-type QueueStatus = "queued" | "running" | "done" | "failed";
-
-interface GenerationQueueItem {
-  id: string;
-  input: GenerateAssetInput;
-  status: QueueStatus;
-  createdAt: string;
-  files?: number;
-  metadataPath?: string;
-  error?: string;
-}
-
-const exportTargets: ExportTarget[] = ["unity", "godot", "tiled", "phaser", "cocos", "common"];
-const exportTargetLabels: Record<ExportTarget, string> = {
-  unity: "Unity",
-  godot: "Godot",
-  tiled: "Tiled",
-  phaser: "Phaser",
-  cocos: "Cocos",
-  common: "Common"
-};
 const gameTypeOptions: SelectOption[] = [
   { value: "RPG", label: "角色扮演" },
   "平台跳跃",
@@ -81,49 +52,34 @@ const gameTypeOptions: SelectOption[] = [
   "塔防",
   "其他"
 ];
-const backgroundOptions: SelectOption[] = [
-  { value: "transparent", label: "background.transparent" },
-  { value: "solid", label: "background.solid" },
-  { value: "custom", label: "background.custom" }
+const stylePresets: Array<{ value: string; label: string; text: string }> = [
+  { value: "pixel", label: "generate.style.pixel", text: "像素画风（pixel art）：边缘清晰，轮廓干净，色板克制，无模糊渐变" },
+  { value: "chibi", label: "generate.style.chibi", text: "Q版画风：大头小身比例，圆润可爱，线条简洁明快" },
+  { value: "cartoon", label: "generate.style.cartoon", text: "卡通画风：明快色彩，清晰描边，扁平干净的卡通渲染" },
+  { value: "retro16", label: "generate.style.retro16", text: "16位复古游戏美术：细腻渐变与抖动阴影，清晰轮廓，像素颗粒感" },
+  { value: "realistic", label: "generate.style.realistic", text: "写实画风：厚涂质感，光影自然，注重体积与细节" }
 ];
-const characterViewOptions: SelectOption[] = [
-  { value: "side-view", label: "view.side-view" },
-  { value: "top-down", label: "view.top-down" },
-  { value: "four-direction", label: "view.four-direction" },
-  { value: "eight-direction", label: "view.eight-direction" }
-];
-const providerOptions: SelectOption[] = [
-  { value: "openai", label: "provider.openai" },
-  { value: "custom", label: "provider.custom" },
-  { value: "local-draft", label: "provider.local-draft" }
-];
-const apiFormatOptions: SelectOption[] = [
-  { value: "openai-image", label: "apiFormat.openai-image" },
-  { value: "openai-chat", label: "apiFormat.openai-chat" }
-];
+const styleCustomValue = "custom";
+const stylePresetOptions: SelectOption[] = stylePresets.map((preset) => ({
+  value: preset.value,
+  label: preset.label
+}));
 const qualityOptions: SelectOption[] = [
   { value: "low", label: "quality.low" },
   { value: "medium", label: "quality.medium" },
   { value: "high", label: "quality.high" }
 ];
-const generationModes: Array<{ value: GenerationMode; label: string }> = [
-  { value: "text-to-image", label: "mode.text-to-image" },
-  { value: "image-to-image", label: "mode.image-to-image" }
-];
+const defaultQuality: GenerationQuality = "low";
+/* 画布尺寸：下拉预设，选「自定义」时才手填 */
+const sizeOptions: SelectOption[] = ["512x512", "1024x1024", "1024x1536", "1536x1024"];
+const sizeCustomValue = "custom";
+const sizeSelectOptions: SelectOption[] = [...sizeOptions, { value: sizeCustomValue, label: "generate.sizeCustom" }];
 const referenceRoles: Array<{ value: ReferenceImageRole; label: string }> = [
   { value: "subject", label: "role.subject" },
   { value: "style", label: "role.style" },
   { value: "composition", label: "role.composition" },
   { value: "palette", label: "role.palette" }
 ];
-const editIntentOptions: Array<{ value: EditIntent; label: string }> = [
-  { value: "preserve-subject", label: "intent.preserve-subject" },
-  { value: "preserve-style", label: "intent.preserve-style" },
-  { value: "preserve-composition", label: "intent.preserve-composition" },
-  { value: "same-series", label: "intent.same-series" },
-  { value: "inpaint", label: "intent.inpaint" }
-];
-const editIntentLabels = Object.fromEntries(editIntentOptions.map((option) => [option.value, option.label])) as Record<EditIntent, string>;
 const referenceStrengthOptions: Array<{ value: ReferenceStrength; label: string }> = [
   { value: "low", label: "低" },
   { value: "medium", label: "中" },
@@ -135,7 +91,6 @@ const assetTypes: Array<{ value: AssetType; label: string }> = [
   { value: "item", label: "assetType.item" },
   { value: "character", label: "assetType.character" },
   { value: "enemy", label: "assetType.enemy" },
-  { value: "tileset", label: "assetType.tileset" },
   { value: "ui", label: "assetType.ui" },
   { value: "background", label: "assetType.background" },
   { value: "effect", label: "assetType.effect" }
@@ -153,19 +108,14 @@ const objectDetailTemplates: Record<AssetType, DetailTemplate[]> = {
     { id: "item-quest", name: "任务物品", prompt: "任务物品形状独特，有可识别的焦点细节，略带仪式感结构", meta: "道具 · 叙事" }
   ],
   character: [
-    { id: "character-consistent", name: "身份一致", prompt: "每一帧保持同一角色身份，服装、比例、色板和视角一致", meta: "角色 · 序列帧" },
-    { id: "character-action", name: "动作清晰", prompt: "动作姿态明确，四肢分离可读，重心平衡，无运动模糊", meta: "角色 · 动作" },
-    { id: "character-rpg", name: "角色站姿", prompt: "紧凑的角色精灵站姿，姿态英勇，武器可见，待机轮廓干净", meta: "角色 · 战斗" }
+    { id: "character-portrait", name: "立绘站姿", prompt: "清晰站姿，重心平衡，轮廓可读，符合游戏精灵比例", meta: "角色 · 站姿" },
+    { id: "character-armor", name: "盔甲材质", prompt: "金属/布料材质分明，边缘精致，色板克制", meta: "角色 · 材质" },
+    { id: "character-rpg", name: "职业主题", prompt: "职业特征明显的造型，武器或标志物可见，待机轮廓干净", meta: "角色 · 辨识" }
   ],
   enemy: [
     { id: "enemy-threat", name: "威胁轮廓", prompt: "敌对生物轮廓，形状夸张且可读，有明确弱点，不要可爱表情", meta: "怪物 · 识别" },
     { id: "enemy-slime", name: "软体怪", prompt: "凝胶状身体，简单面部，可挤压的圆润形体，边缘半透明高光", meta: "怪物 · 软体" },
     { id: "enemy-boss", name: "精英单位", prompt: "更大的精英变体细节，甲壳或护甲板，更强轮廓，攻击提示可读", meta: "怪物 · 精英" }
-  ],
-  tileset: [
-    { id: "tile-seam", name: "拼接边缘", prompt: "边缘可平铺，图案可重复，边界不穿过独特地标，铺满整个瓦片", meta: "瓦片集 · 拼接" },
-    { id: "tile-wear", name: "地表磨损", prompt: "细微裂缝、缺角和小幅表面变化，俯视光照一致", meta: "瓦片集 · 地表" },
-    { id: "tile-modular", name: "模块套件", prompt: "模块化地牢结构，地面与墙体视觉语言匹配，尺度线索一致", meta: "瓦片集 · 模块" }
   ],
   ui: [
     { id: "ui-panel", name: "面板控件", prompt: "干净的界面面板部件，边缘适合九宫格切片，斜面可读，无文字标签", meta: "界面 · 面板" },
@@ -178,70 +128,41 @@ const objectDetailTemplates: Record<AssetType, DetailTemplate[]> = {
     { id: "bg-atmosphere", name: "气氛光", prompt: "环境气氛光，深度层次可读，不干扰玩法的背景", meta: "背景 · 气氛" }
   ],
   effect: [
-    { id: "effect-impact", name: "命中特效", prompt: "短促命中爆发，中心点清晰，径向粒子，透明背景", meta: "特效 · 打击" },
-    { id: "effect-loop", name: "循环粒子", prompt: "适合循环的粒子形状，能量流向一致，无明显开头或结尾", meta: "特效 · 循环" },
-    { id: "effect-magic", name: "魔法光效", prompt: "奥术发光粒子，法术核心可读，外层柔和辉光，透明边缘干净", meta: "特效 · 魔法" }
+    { id: "effect-impact", name: "命中爆发", prompt: "短促命中爆发，中心点清晰，径向粒子，透明背景", meta: "特效 · 打击" },
+    { id: "effect-burst", name: "能量爆发", prompt: "能量流向一致、形状简洁的单体爆发形态", meta: "特效 · 能量" },
+    { id: "effect-magic", name: "魔法光效", prompt: "奥术发光粒子，法术核心可读，外层柔和辉光", meta: "特效 · 魔法" }
   ]
 };
 
-const defaultAnimations: AnimationConfig[] = [
-  { name: "待机", frames: 4, fps: 6, loop: true },
-  { name: "行走", frames: 4, fps: 8, loop: true },
-  { name: "攻击", frames: 4, fps: 10, loop: false }
-];
-
 const defaultSettings: AppSettings = {
-  aiProvider: "openai",
-  customApiFormat: "openai-image",
   apiKey: "",
-  apiBaseUrl: "https://api.openai.com/v1/images/generations",
-  model: "gpt-image-1.5",
+  apiBaseUrl: "",
+  model: "",
   availableModels: [],
   defaultProjectRoot: "",
-  defaultExportDirectory: "",
-  defaultImageSize: "64x64",
-  defaultGenerationCount: 1,
-  savePromptHistory: true,
-  autoTransparent: true,
-  autoTrim: true,
-  autoPackAtlas: true,
-  generationQuality: "low"
+  defaultExportDirectory: ""
 };
 
 function App(): JSX.Element {
   const { t } = useTranslation();
   const [page, setPage] = useState<Page>("home");
   const [project, setProject] = useState<Project | null>(null);
-  const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
+  const [homeProjects, setHomeProjects] = useState<RecentProject[]>([]);
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
-  const [history, setHistory] = useState<GenerationHistoryRecord[]>([]);
   const [queuedReference, setQueuedReference] = useState<ReferenceDraft | null>(null);
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
-  const [queueItems, setQueueItems] = useState<GenerationQueueItem[]>([]);
-  const [queueConcurrency, setQueueConcurrency] = useState(1);
-  const [queueRunning, setQueueRunning] = useState(false);
-  const [queueMessage, setQueueMessage] = useState("");
-  const queueStopRequested = useRef(false);
 
   useEffect(() => {
     void refreshInitialState();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    if (project) {
-      void refreshHistory(project.path);
-    }
-  }, [project?.path]);
 
   const navItems = useMemo(
     () => [
       { page: "home" as Page, label: t("nav.home"), icon: Home, enabled: true },
-      { page: "project" as Page, label: t("nav.project"), icon: Gauge, enabled: Boolean(project) },
       { page: "generate" as Page, label: t("nav.generate"), icon: Wand2, enabled: Boolean(project) },
-      { page: "preview" as Page, label: t("nav.preview"), icon: Image, enabled: Boolean(project) },
-      { page: "export" as Page, label: t("nav.export"), icon: Download, enabled: Boolean(project) },
-      { page: "history" as Page, label: t("nav.history"), icon: History, enabled: Boolean(project) },
+      { page: "assets" as Page, label: t("nav.assets"), icon: Image, enabled: Boolean(project) },
       { page: "settings" as Page, label: t("nav.settings"), icon: Settings, enabled: true }
     ],
     [project, i18n.language]
@@ -257,17 +178,22 @@ function App(): JSX.Element {
 
   async function refreshInitialState(): Promise<void> {
     try {
-      if (!window.topspeedBuilder) {
-        setMessage("浏览器预览模式：桌面通信未连接；桌面应用中会启用本地文件、智能生成和导出服务。");
+      const bridge = window.topspeedBuilder;
+      if (!bridge) {
+        setMessage("浏览器预览模式：桌面通信未连接；桌面应用中会启用本地文件、智能生成服务。");
+        return;
+      }
+      if (typeof bridge.listDiscoverableProjects !== "function") {
+        setMessage(t("message.staleBridge"));
         return;
       }
 
-      const [nextSettings, nextRecent] = await Promise.all([
-        unwrap(window.topspeedBuilder.getSettings()),
-        unwrap(window.topspeedBuilder.getRecentProjects())
+      const [nextSettings, nextProjects] = await Promise.all([
+        unwrap(bridge.getSettings()),
+        unwrap(bridge.listDiscoverableProjects())
       ]);
       setSettings(nextSettings);
-      setRecentProjects(nextRecent);
+      setHomeProjects(nextProjects);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     }
@@ -281,10 +207,16 @@ function App(): JSX.Element {
     return nextProject;
   }
 
-  async function refreshHistory(projectPath: string): Promise<void> {
-    if (!window.topspeedBuilder) return;
-    const nextHistory = await unwrap(window.topspeedBuilder.getHistory(projectPath));
-    setHistory(nextHistory);
+  async function refreshHomeProjects(): Promise<void> {
+    try {
+      const bridge = window.topspeedBuilder;
+      if (bridge && typeof bridge.listDiscoverableProjects === "function") {
+        setHomeProjects(await unwrap(bridge.listDiscoverableProjects()));
+      }
+    } catch (error) {
+      // 静默失败：仅刷新失败时忽略
+      void error;
+    }
   }
 
   async function runTask<T>(label: string, task: () => Promise<T>, success?: (result: T) => string): Promise<T | null> {
@@ -292,122 +224,18 @@ function App(): JSX.Element {
     setMessage("");
     try {
       const result = await task();
-      setMessage(success?.(result) ?? t("message.completed"));
+      const text = success?.(result) ?? t("message.completed");
+      setMessage(text);
+      // 成功提示自动消失（约 4s），错误提示保留便于阅读
+      window.setTimeout(() => {
+        setMessage((current) => (current === text ? "" : current));
+      }, 4000);
       return result;
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
       return null;
     } finally {
       setBusy("");
-    }
-  }
-
-  async function refreshGeneratedProjectData(projectPath = project?.path): Promise<void> {
-    if (!projectPath) return;
-    await refreshProject(projectPath);
-    await refreshHistory(projectPath);
-  }
-
-  function addQueueItem(input: GenerateAssetInput, displayName: string): void {
-    const taskInput = snapshotGenerateInput(input);
-    setQueueItems((current) => [
-      ...current,
-      {
-        id: crypto.randomUUID(),
-        input: taskInput,
-        status: "queued",
-        createdAt: new Date().toISOString()
-      }
-    ]);
-    setQueueMessage(t("generate.queueAdded", { name: displayName || taskInput.name || t(assetTypeLabel(taskInput.assetType)) }));
-  }
-
-  function patchQueueItem(id: string, patch: Partial<GenerationQueueItem>): void {
-    setQueueItems((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
-  }
-
-  function removeQueueItem(id: string): void {
-    setQueueItems((current) => current.filter((item) => item.id !== id));
-  }
-
-  function retryQueueItem(id: string): void {
-    patchQueueItem(id, { status: "queued", files: undefined, metadataPath: undefined, error: undefined });
-  }
-
-  function clearFinishedQueueItems(): void {
-    setQueueItems((current) => current.filter((item) => item.status !== "done"));
-  }
-
-  function clearAllQueueItems(): void {
-    if (queueRunning) return;
-    setQueueItems([]);
-    setQueueMessage("");
-  }
-
-  function pauseQueue(): void {
-    queueStopRequested.current = true;
-    setQueueMessage(t("generate.queuePausing"));
-  }
-
-  async function runQueue(): Promise<void> {
-    if (queueRunning) return;
-    if (!window.topspeedBuilder) {
-      setQueueMessage(t("message.browserMode"));
-      return;
-    }
-
-    const pending = queueItems.filter((item) => item.status === "queued");
-    if (pending.length === 0) {
-      setQueueMessage(t("generate.queueEmpty"));
-      return;
-    }
-
-    queueStopRequested.current = false;
-    setQueueRunning(true);
-    setQueueMessage(t("generate.queueRunning", { count: pending.length, concurrency: queueConcurrency }));
-
-    let done = 0;
-    let failed = 0;
-    const touchedProjectPaths = new Set<string>();
-    const nextItems = [...pending];
-    const workers = Array.from({ length: Math.min(Math.max(queueConcurrency, 1), nextItems.length) }, async () => {
-      while (!queueStopRequested.current) {
-        const item = nextItems.shift();
-        if (!item) return;
-
-        patchQueueItem(item.id, { status: "running", error: undefined, files: undefined, metadataPath: undefined });
-        try {
-          const result: GeneratedAssetResult = await unwrap(window.topspeedBuilder.generateAssets(item.input));
-          done += 1;
-          touchedProjectPaths.add(item.input.projectPath);
-          patchQueueItem(item.id, {
-            status: "done",
-            files: result.files.length,
-            metadataPath: result.metadataPath
-          });
-        } catch (error) {
-          failed += 1;
-          patchQueueItem(item.id, {
-            status: "failed",
-            error: formatQueueError(error)
-          });
-        }
-      }
-    });
-
-    try {
-      await Promise.all(workers);
-      if (done > 0 && project?.path && touchedProjectPaths.has(project.path)) {
-        await refreshGeneratedProjectData(project.path);
-      }
-      setQueueMessage(
-        queueStopRequested.current
-          ? t("generate.queuePaused", { done, failed })
-          : t("generate.queueDone", { done, failed })
-      );
-    } finally {
-      queueStopRequested.current = false;
-      setQueueRunning(false);
     }
   }
 
@@ -475,24 +303,24 @@ function App(): JSX.Element {
           </div>
         </header>
 
-        {message && <div className={message.includes("失败") || message.includes("错误") ? "notice error" : "notice"}>{message}</div>}
+        {message && (
+          <div className={message.includes("失败") || message.includes("错误") ? "notice error" : "notice"}>
+            <span>{message}</span>
+            <button type="button" className="noticeClose" title={t("notice.dismiss")} onClick={() => setMessage("")}>
+              <X size={14} />
+            </button>
+          </div>
+        )}
 
         {page === "home" && (
           <HomePage
             settings={settings}
-            recentProjects={recentProjects}
+            projects={homeProjects}
             runTask={runTask}
             setProject={setProject}
             setPage={setPage}
-            reloadRecent={refreshInitialState}
-          />
-        )}
-        {page === "project" && project && (
-          <ProjectPage
-            project={project}
-            runTask={runTask}
-            onSaved={(nextProject) => {
-              setProject(nextProject);
+            reloadHome={async () => {
+              await refreshInitialState();
             }}
           />
         )}
@@ -502,26 +330,19 @@ function App(): JSX.Element {
             settings={settings}
             runTask={runTask}
             queuedReference={queuedReference}
-            queueItems={queueItems}
-            queueConcurrency={queueConcurrency}
-            queueRunning={queueRunning}
-            queueMessage={queueMessage}
             onQueuedReferenceConsumed={() => setQueuedReference(null)}
-            onQueueAdd={addQueueItem}
-            onQueueRun={runQueue}
-            onQueuePause={pauseQueue}
-            onQueueConcurrencyChange={setQueueConcurrency}
-            onQueueRetry={retryQueueItem}
-            onQueueRemove={removeQueueItem}
-            onQueueClearDone={clearFinishedQueueItems}
-            onQueueClearAll={clearAllQueueItems}
+            onCommitted={async () => {
+              await refreshProject(project.path);
+            }}
           />
         )}
-        {page === "preview" && project && (
-          <PreviewPage
+        {page === "assets" && project && (
+          <AssetsPage
             project={project}
+            exportDirectory={settings.defaultExportDirectory}
             runTask={runTask}
             refreshProject={refreshProject}
+            onOpenSettings={() => setPage("settings")}
             onUseAsReference={(asset, filePath) => {
               setQueuedReference({
                 path: filePath,
@@ -533,8 +354,6 @@ function App(): JSX.Element {
             }}
           />
         )}
-        {page === "export" && project && <ExportPage project={project} runTask={runTask} />}
-        {page === "history" && project && <HistoryPage project={project} history={history} />}
         {page === "settings" && (
           <SettingsPage
             settings={settings}
@@ -551,251 +370,99 @@ function App(): JSX.Element {
 
 function HomePage(props: {
   settings: AppSettings;
-  recentProjects: RecentProject[];
+  projects: RecentProject[];
   runTask: <T>(label: string, task: () => Promise<T>, success?: (result: T) => string) => Promise<T | null>;
   setProject: (project: Project) => void;
   setPage: (page: Page) => void;
-  reloadRecent: () => Promise<void>;
+  reloadHome: () => Promise<void>;
 }): JSX.Element {
   const { t } = useTranslation();
-  const [input, setInput] = useState<CreateProjectInput>({
-    name: "演示角色资源",
-    parentDirectory: props.settings.defaultProjectRoot,
-    gameType: "RPG",
-    style: "十六位像素风",
-    defaultResolution: "32x32",
-    defaultBackground: "transparent",
-    exportTargets: ["unity", "godot", "tiled", "common"]
-  });
+  const [name, setName] = useState("");
+  const hasRoot = Boolean(props.settings.defaultProjectRoot.trim());
+  const canCreate = Boolean(name.trim() && hasRoot);
 
+  // 默认项目目录变化（或进入首页）时重新拉取目录下项目列表
   useEffect(() => {
-    setInput((current) => ({ ...current, parentDirectory: props.settings.defaultProjectRoot }));
+    void props.reloadHome();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.settings.defaultProjectRoot]);
+
+  const openProject = async (projectPath: string): Promise<void> => {
+    const project = await props.runTask(t("busy.openRecent"), () => unwrap(window.topspeedBuilder.openProjectPath(projectPath)));
+    if (project) {
+      props.setProject(project);
+      props.setPage("generate");
+      await props.reloadHome();
+    }
+  };
+
+  const createProject = async (): Promise<void> => {
+    if (!canCreate) return;
+    const project = await props.runTask(
+      t("busy.createProject"),
+      () => unwrap(window.topspeedBuilder.createProject({ name: name.trim() })),
+      (created) => `${t("message.created")}: ${created.path}`
+    );
+    if (project) {
+      setName("");
+      props.setProject(project);
+      props.setPage("generate");
+      await props.reloadHome();
+    }
+  };
 
   return (
     <div className="pageGrid two">
       <section className="panel">
-        <PanelTitle icon={Plus} title={t("home.new.title")} subtitle={t("home.new.subtitle")} />
-        <div className="formGrid">
-          <TextInput label={t("field.projectName")} value={input.name} onChange={(name) => setInput({ ...input, name })} />
-          <TextInput label={t("field.parentDir")} value={input.parentDirectory ?? ""} onChange={(parentDirectory) => setInput({ ...input, parentDirectory })} />
-          <button
-            className="ghostButton"
-            onClick={async () => {
-              const directory = await props.runTask(t("field.chooseDir"), () => unwrap(window.topspeedBuilder.chooseProjectRoot()));
-              if (directory) setInput({ ...input, parentDirectory: directory });
-            }}
-          >
-            <FolderOpen size={16} />
-            {t("field.chooseDir")}
-          </button>
-          <SelectInput
-            label={t("field.gameType")}
-            value={input.gameType}
-            options={gameTypeOptions.slice(0, 6)}
-            onChange={(gameType) => setInput({ ...input, gameType })}
-          />
-          <SelectInput
-            label={t("field.defaultSize")}
-            value={input.defaultResolution}
-            options={["16x16", "32x32", "64x64", "128x128"]}
-            onChange={(defaultResolution) => setInput({ ...input, defaultResolution })}
-          />
-          <TextInput label={t("field.artStyle")} value={input.style} onChange={(style) => setInput({ ...input, style })} />
-          <TargetPicker value={input.exportTargets} onChange={(exportTargets) => setInput({ ...input, exportTargets })} />
-        </div>
-        <button
-          className="primaryButton"
-          onClick={async () => {
-            const project = await props.runTask(
-              t("busy.createProject"),
-              () => unwrap(window.topspeedBuilder.createProject(input)),
-              (created) => `${t("message.created")}: ${created.path}`
-            );
-            if (project) {
-              props.setProject(project);
-              props.setPage("project");
-              await props.reloadRecent();
-            }
+        <PanelTitle icon={Plus} title={t("home.new.title")} />
+        {!hasRoot && (
+          <div className="inlineWarning">
+            {t("home.new.noRootHint")}
+          </div>
+        )}
+        <form
+          className="newProjectForm"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void createProject();
           }}
         >
-          <Plus size={18} />
-          {t("home.new.create")}
-        </button>
+          <TextInput label={t("field.projectName")} value={name} onChange={setName} />
+          <button className="primaryButton" type="submit" disabled={!canCreate}>
+            <Plus size={18} />
+            {t("home.new.create")}
+          </button>
+        </form>
       </section>
 
       <section className="panel">
-        <PanelTitle icon={FolderOpen} title={t("home.open.title")} subtitle={t("home.open.subtitle")} />
-        <button
-          className="primaryButton secondary"
-          onClick={async () => {
-            const project = await props.runTask(t("busy.openProject"), () => unwrap(window.topspeedBuilder.openProjectDialog()));
-            if (project) {
-              props.setProject(project);
-              props.setPage("generate");
-              await props.reloadRecent();
-            }
-          }}
-        >
-          <FolderOpen size={18} />
-          {t("home.open.button")}
-        </button>
-        <div className="recentList">
-          {props.recentProjects.length === 0 && <EmptyState text={t("home.open.empty")} />}
-          {props.recentProjects.map((item) => (
-            <article key={item.path} className="recentItem">
-              <div>
-                <strong>{item.name}</strong>
-                <span>{gameTypeLabelT(t, item.gameType)} · {item.style}</span>
-                <small>{item.path}</small>
-              </div>
-              <div className="rowActions">
-                <button
-                  title={t("home.open.open")}
-                  onClick={async () => {
-                    const project = await props.runTask(t("busy.openRecent"), () => unwrap(window.topspeedBuilder.openProjectPath(item.path)));
-                    if (project) {
-                      props.setProject(project);
-                      props.setPage("generate");
-                    }
-                  }}
-                >
-                  <Play size={15} />
-                </button>
-                <button
-                  title={t("home.open.remove")}
-                  onClick={async () => {
-                    await props.runTask(t("busy.removeRecent"), () => unwrap(window.topspeedBuilder.removeRecentProject(item.path)));
-                    await props.reloadRecent();
-                  }}
-                >
-                  <Trash2 size={15} />
-                </button>
-              </div>
-            </article>
-          ))}
-        </div>
+        <PanelTitle icon={FolderOpen} title={t("home.open.title")} />
+        {!hasRoot ? (
+          <div className="inlineWarning">
+            {t("home.open.noRootHint")}
+          </div>
+        ) : props.projects.length === 0 ? (
+          <EmptyState text={t("home.open.rootEmpty")} />
+        ) : (
+          <div className="recentList">
+            {props.projects.map((item) => (
+              <article key={item.path} className="recentItem">
+                <div>
+                  <strong>{item.name}</strong>
+                  <span>{gameTypeLabelT(t, item.gameType)} · {item.style}</span>
+                  <small>{item.path}</small>
+                </div>
+                <div className="rowActions">
+                  <button title={t("home.open.open")} onClick={() => void openProject(item.path)}>
+                    <Play size={15} />
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
       </section>
     </div>
-  );
-}
-
-function ProjectPage(props: {
-  project: Project;
-  runTask: <T>(label: string, task: () => Promise<T>, success?: (result: T) => string) => Promise<T | null>;
-  onSaved: (project: Project) => void;
-}): JSX.Element {
-  const { t } = useTranslation();
-  const [draft, setDraft] = useState<Project>(props.project);
-  const [newTemplate, setNewTemplate] = useState({ name: "赛博朋克霓虹风", description: "赛博朋克霓虹二维游戏美术，轮廓干净" });
-
-  useEffect(() => setDraft(props.project), [props.project]);
-
-  function addTemplate(): void {
-    const template: StyleTemplate = {
-      id: crypto.randomUUID(),
-      name: newTemplate.name,
-      description: newTemplate.description,
-      lineWeight: "轮廓一致",
-      lighting: "单主光",
-      cameraView: "项目默认视角"
-    };
-    setDraft({ ...draft, styleTemplates: [template, ...draft.styleTemplates] });
-  }
-
-  function applyTemplate(template: StyleTemplate): void {
-    setDraft({ ...draft, style: template.name, styleDescription: template.description });
-  }
-
-  return (
-    <section className="panel wide">
-      <PanelTitle icon={Gauge} title={t("project.title")} subtitle={t("project.subtitle")} />
-      <div className="formGrid three">
-        <TextInput label={t("field.projectName")} value={draft.name} onChange={(name) => setDraft({ ...draft, name })} />
-        <SelectInput
-          label={t("field.gameType")}
-          value={draft.gameType}
-          options={gameTypeOptions}
-          onChange={(gameType) => setDraft({ ...draft, gameType })}
-        />
-        <SelectInput
-          label={t("field.defaultSize")}
-          value={draft.defaultResolution}
-          options={["16x16", "32x32", "64x64", "128x128"]}
-          onChange={(defaultResolution) => setDraft({ ...draft, defaultResolution })}
-        />
-        <TextInput label={t("field.artStyle")} value={draft.style} onChange={(style) => setDraft({ ...draft, style })} />
-        <SelectInput
-          label={t("field.defaultBg")}
-          value={draft.defaultBackground}
-          options={backgroundOptions}
-          onChange={(defaultBackground) => setDraft({ ...draft, defaultBackground: defaultBackground as Project["defaultBackground"] })}
-        />
-        <TextInput label={t("field.projectPath")} value={draft.path} disabled onChange={() => undefined} />
-      </div>
-      <TextArea label={t("project.styleDesc")} value={draft.styleDescription} onChange={(styleDescription) => setDraft({ ...draft, styleDescription })} />
-      <TargetPicker value={draft.exportTargets} onChange={(exportTargets) => setDraft({ ...draft, exportTargets })} />
-
-      <div className="panelTitle" style={{ border: "none", padding: "12px 0 0", marginTop: 4 }}>
-        <div className="panelIcon"><Brush size={18} /></div>
-        <div><h2>{t("style.templateTitle")}</h2><p>{t("style.templateSubtitle")}</p></div>
-      </div>
-
-      <div className="templateGrid">
-        {draft.styleTemplates.length === 0 && <EmptyState text={t("style.empty")} />}
-        {draft.styleTemplates.map((template) => (
-          <article
-            key={template.id}
-            className="templateItem templateItemAction"
-            role="button"
-            tabIndex={0}
-            title={t("style.templateTitle")}
-            onClick={() => applyTemplate(template)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                applyTemplate(template);
-              }
-            }}
-          >
-            <button
-              className="templateDelete"
-              title={t("home.open.remove")}
-              onClick={(event) => {
-                event.stopPropagation();
-                setDraft({ ...draft, styleTemplates: draft.styleTemplates.filter((item) => item.id !== template.id) });
-              }}
-            >
-              <Trash2 size={13} />
-            </button>
-            <strong>{template.name}</strong>
-            <span>{template.description}</span>
-            <small>{template.lineWeight ?? "—"} · {template.lighting ?? "—"} · {template.cameraView ?? "—"}</small>
-            <small className="templateHint">{t("preview.locate")}</small>
-          </article>
-        ))}
-      </div>
-
-      <div className="formGrid">
-        <TextInput label={t("style.templateName")} value={newTemplate.name} onChange={(name) => setNewTemplate({ ...newTemplate, name })} />
-        <TextInput label={t("style.templateDesc")} value={newTemplate.description} onChange={(description) => setNewTemplate({ ...newTemplate, description })} />
-        <button className="ghostButton" style={{ alignSelf: "end" }} onClick={addTemplate}>
-          <Plus size={16} />
-          {t("style.addTemplate")}
-        </button>
-      </div>
-
-      <button
-        className="primaryButton"
-        onClick={async () => {
-          const saved = await props.runTask(t("busy.saveProject"), () => unwrap(window.topspeedBuilder.saveProject(draft)));
-          if (saved) props.onSaved(saved);
-        }}
-      >
-        <Save size={18} />
-        {t("project.save")}
-      </button>
-    </section>
   );
 }
 
@@ -804,54 +471,56 @@ function GeneratePage(props: {
   settings: AppSettings;
   runTask: <T>(label: string, task: () => Promise<T>, success?: (result: T) => string) => Promise<T | null>;
   queuedReference: ReferenceDraft | null;
-  queueItems: GenerationQueueItem[];
-  queueConcurrency: number;
-  queueRunning: boolean;
-  queueMessage: string;
   onQueuedReferenceConsumed: () => void;
-  onQueueAdd: (input: GenerateAssetInput, displayName: string) => void;
-  onQueueRun: () => void;
-  onQueuePause: () => void;
-  onQueueConcurrencyChange: (value: number) => void;
-  onQueueRetry: (id: string) => void;
-  onQueueRemove: (id: string) => void;
-  onQueueClearDone: () => void;
-  onQueueClearAll: () => void;
+  onCommitted: () => Promise<void>;
 }): JSX.Element {
   const { t } = useTranslation();
-  const defaultPresets = useMemo(() => presetsFor("icon", props.project.defaultResolution), []);
-  const [generationMode, setGenerationMode] = useState<GenerationMode>("text-to-image");
+  const defaultPresets = useMemo(() => presetsFor("icon"), []);
   const [assetType, setAssetType] = useState<AssetType>("icon");
   const detailTemplates = useMemo(() => objectDetailTemplates[assetType], [assetType]);
-  const [name, setName] = useState(defaultPresets.name);
   const [description, setDescription] = useState(defaultPresets.description);
   const [detailPrompt, setDetailPrompt] = useState("");
   const [selectedDetailTemplateIds, setSelectedDetailTemplateIds] = useState<string[]>([]);
   const [referenceImages, setReferenceImages] = useState<ReferenceDraft[]>([]);
-  const [editIntent, setEditIntent] = useState<EditIntent>("preserve-subject");
   const [referenceStrength, setReferenceStrength] = useState<ReferenceStrength>("medium");
-  const [maskImage, setMaskImage] = useState<ReferenceDraft | null>(null);
-  const [size, setSize] = useState(defaultPresets.size);
-  const [count, setCount] = useState(props.settings.defaultGenerationCount);
+  const [sizePreset, setSizePreset] = useState(defaultPresets.size);
+  const [customSize, setCustomSize] = useState("");
+  const [count, setCount] = useState(defaultPresets.count);
+  const [cellNamesText, setCellNamesText] = useState("");
+  const [quality, setQuality] = useState<GenerationQuality>(defaultQuality);
   const [transparentBackground, setTransparentBackground] = useState(defaultPresets.transparentBackground);
-  const [targets, setTargets] = useState<ExportTarget[]>(props.project.exportTargets);
+  const [trimEdges, setTrimEdges] = useState(true);
+  const [stylePreset, setStylePreset] = useState(stylePresets[0].value);
+  const [customStyle, setCustomStyle] = useState("");
 
-  const [makeAtlas, setMakeAtlas] = useState(props.settings.autoPackAtlas);
-  const [characterView, setCharacterView] = useState("side-view");
-  const [animations, setAnimations] = useState<AnimationConfig[]>(defaultAnimations);
-  const characterFrameTotal = useMemo(() => animations.reduce((sum, animation) => sum + Math.max(animation.frames, 0), 0), [animations]);
-  const [makeSpriteSheet, setMakeSpriteSheet] = useState(true);
-  const [tileTheme, setTileTheme] = useState("地牢");
-  const [tileTypesText, setTileTypesText] = useState("地板\n墙体\n内角\n外角\n门\n水池\n裂缝\n宝箱");
-  const [tileSeamless, setTileSeamless] = useState(true);
-  const [makeTiled, setMakeTiled] = useState(true);
+  const [draft, setDraft] = useState<GridDraft | null>(null);
+  const [gridDataUrl, setGridDataUrl] = useState("");
+  const [sliceCols, setSliceCols] = useState(0);
+  const [sliceRows, setSliceRows] = useState(0);
+  const [sliceShiftX, setSliceShiftX] = useState(0);
+  const [sliceShiftY, setSliceShiftY] = useState(0);
+  const [sliceShrink, setSliceShrink] = useState(8);
+
+  // 美术风格：预设直出，自定义才需填风格描述
+  const selectedStyleText =
+    stylePreset === styleCustomValue
+      ? customStyle.trim()
+      : stylePresets.find((preset) => preset.value === stylePreset)?.text ?? "";
+  const styleReady = stylePreset !== styleCustomValue || customStyle.trim().length > 0;
+  const styleOptions = useMemo<SelectOption[]>(
+    () => [...stylePresetOptions, { value: styleCustomValue, label: "generate.style.custom" }],
+    []
+  );
+
+  useEffect(() => {
+    setDraft(null);
+    setGridDataUrl("");
+  }, [props.project.path]);
 
   useEffect(() => {
     const queued = props.queuedReference;
     if (!queued) return;
 
-    setGenerationMode("image-to-image");
-    setEditIntent("preserve-subject");
     setReferenceImages((current) => {
       if (current.some((item) => item.path === queued.path)) {
         return current;
@@ -870,15 +539,31 @@ function GeneratePage(props: {
     props.onQueuedReferenceConsumed();
   }, [props.queuedReference, props.project.path]);
 
+  useEffect(() => {
+    if (!draft) {
+      setGridDataUrl("");
+      return;
+    }
+    setSliceCols(draft.cols);
+    setSliceRows(draft.rows);
+    let alive = true;
+    window.topspeedBuilder.readImageDataUrl(props.project.path, draft.gridImagePath).then((result) => {
+      if (alive && result.ok && result.data) setGridDataUrl(result.data);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [draft, props.project.path]);
+
   function handleAssetTypeChange(newType: AssetType): void {
     setAssetType(newType);
-    const { name: n, description: d, size: s, transparentBackground: t } = presetsFor(newType, props.project.defaultResolution);
-    setName(n);
-    setDescription(d);
+    const preset = presetsFor(newType);
+    setDescription(preset.description);
     setDetailPrompt("");
     setSelectedDetailTemplateIds([]);
-    setSize(s);
-    setTransparentBackground(t);
+    setSizePreset(preset.size);
+    setCount(preset.count);
+    setTransparentBackground(preset.transparentBackground);
   }
 
   function composeDetailPrompt(ids: string[]): string {
@@ -907,91 +592,119 @@ function GeneratePage(props: {
     setSelectedDetailTemplateIds([]);
   }
 
-  const input: GenerateAssetInput = {
-    projectPath: props.project.path,
-    generationMode,
-    assetType,
-    name,
-    description,
-    detailPrompt,
-    referenceImages: generationMode === "image-to-image" ? referenceImages.map(toReferenceInput) : [],
-    editIntent,
-    referenceStrength,
-    maskImagePath: generationMode === "image-to-image" && editIntent === "inpaint" ? maskImage?.path : undefined,
-    size,
-    count,
-    transparentBackground,
-    exportTargets: targets,
-    iconItems: [],
-    makeAtlas,
-    characterView,
-    animations,
-    makeSpriteSheet,
-    tileTheme,
-    tileTypes: splitLines(tileTypesText),
-    tileSeamless,
-    makeTiled
-  };
+  function buildInput(): GenerateAssetInput {
+    return {
+      projectPath: props.project.path,
+      assetType,
+      name: t(assetTypeLabel(assetType)),
+      description,
+      detailPrompt,
+      referenceImages: referenceImages.map(toReferenceInput),
+      referenceStrength,
+      size: sizePreset === sizeCustomValue ? customSize.trim() || "1024x1024" : sizePreset,
+      count,
+      cellNames: splitLines(cellNamesText),
+      quality,
+      style: selectedStyleText,
+      transparentBackground,
+      trimEdges
+    };
+  }
+
+  async function generateDraft(): Promise<void> {
+    if (!styleReady) return;
+    setDraft(null);
+    const nextDraft = await props.runTask(
+      t("busy.generateGrid"),
+      () => unwrap(window.topspeedBuilder.generateGrid(buildInput()))
+    );
+    if (nextDraft) {
+      setDraft(nextDraft);
+    }
+  }
+
+  async function commitDraft(): Promise<void> {
+    if (!draft) return;
+    const options: GridSliceOptions = {
+      cols: sliceCols,
+      rows: sliceRows,
+      shiftX: sliceShiftX,
+      shiftY: sliceShiftY,
+      shrinkPercent: sliceShrink
+    };
+    const result = await props.runTask(
+      t("busy.commitSlice"),
+      () => unwrap(window.topspeedBuilder.commitSlice(buildInput(), draft, options)),
+      (committed) => t("generate.commitDone", { count: committed.files.length })
+    );
+    if (result) {
+      setDraft(null);
+      await props.onCommitted();
+    }
+  }
+
+  const previewLines = draft
+    ? {
+        vertical: Array.from({ length: Math.max(1, sliceCols) - 1 }, (_, i) => (i + 1) / sliceCols),
+        horizontal: Array.from({ length: Math.max(1, sliceRows) - 1 }, (_, i) => (i + 1) / sliceRows)
+      }
+    : null;
 
   return (
     <div className="pageGrid generation">
       <section className="panel">
-        <PanelTitle icon={Wand2} title={t("generate.title")} subtitle={t("generate.subtitle", { provider: t(providerLabel(props.settings.aiProvider)), model: props.settings.model })} />
-        {props.settings.aiProvider === "local-draft" && (
-          <div className="inlineWarning">
-            {t("generate.draftWarning")}
-          </div>
-        )}
-        <div className="typeRail">
-          {assetTypes.map((type) => (
-            <button key={type.value} className={assetType === type.value ? "selected" : ""} onClick={() => handleAssetTypeChange(type.value)}>
-              {t(type.label)}
-            </button>
-          ))}
-        </div>
-
-        <div className="modeRail">
-          {generationModes.map((mode) => (
-            <button
-              key={mode.value}
-              type="button"
-              className={generationMode === mode.value ? "selected" : ""}
-              onClick={() => setGenerationMode(mode.value)}
-            >
-              {t(mode.label)}
-            </button>
-          ))}
-        </div>
-
-        <div className="inlineNote">
-          {t("generate.templateHint")}
-        </div>
-        {generationMode === "image-to-image" && (
-          <ReferenceImagePanel
-            project={props.project}
-            value={referenceImages}
-            maskImage={maskImage}
-            editIntent={editIntent}
-            referenceStrength={referenceStrength}
-            runTask={props.runTask}
-            onChange={setReferenceImages}
-            onMaskChange={setMaskImage}
-            onEditIntentChange={setEditIntent}
-            onReferenceStrengthChange={setReferenceStrength}
+        <PanelTitle icon={Wand2} title={t("generate.title")} />
+        <div className="topDeck">
+          <SelectInput
+            label={t("generate.assetType")}
+            value={assetType}
+            options={assetTypes}
+            onChange={(next) => handleAssetTypeChange(next as AssetType)}
           />
+          <SelectInput
+            label={t("generate.style")}
+            value={stylePreset}
+            options={styleOptions}
+            onChange={(next) => setStylePreset(String(next))}
+          />
+          <DeckToggle label={t("generate.transparent")} value={transparentBackground} onChange={setTransparentBackground} />
+          <DeckToggle label={t("generate.trimEdges")} value={trimEdges} onChange={setTrimEdges} />
+        </div>
+        {stylePreset === styleCustomValue && (
+          <>
+            <TextArea label={t("generate.styleCustom")} value={customStyle} onChange={setCustomStyle} />
+            {!styleReady && <div className="inlineWarning">{t("generate.styleCustomEmpty")}</div>}
+          </>
         )}
-        <div className="formGrid">
-          <TextInput label={t("generate.name")} value={name} onChange={setName} />
-          <TextInput label={t("generate.size")} value={size} onChange={setSize} />
-          <NumberInput
-            label={assetType === "character" ? t("generate.characterVersions") : t("generate.count")}
-            value={count}
-            min={1}
-            max={assetType === "character" ? 8 : 64}
-            onChange={setCount}
+
+        <div className="formGrid three">
+          <SelectInput
+            label={t("generate.size")}
+            value={sizePreset}
+            options={sizeSelectOptions}
+            onChange={(next) => setSizePreset(String(next))}
+          />
+          <NumberInput label={t("generate.count")} value={count} min={1} max={36} onChange={setCount} />
+          <SelectInput
+            label={t("generate.quality")}
+            value={quality}
+            options={qualityOptions}
+            onChange={(next) => setQuality(next as GenerationQuality)}
           />
         </div>
+        {sizePreset === sizeCustomValue && (
+          <TextInput label={t("generate.sizeCustom")} value={customSize} onChange={setCustomSize} />
+        )}
         <TextArea label={t("generate.desc")} value={description} onChange={setDescription} />
+
+        <ReferenceImagePanel
+          project={props.project}
+          value={referenceImages}
+          referenceStrength={referenceStrength}
+          runTask={props.runTask}
+          onChange={setReferenceImages}
+          onReferenceStrengthChange={setReferenceStrength}
+        />
         <div className="detailTemplateBlock">
           <div className="detailTemplateHeader">
             <div>
@@ -1026,240 +739,70 @@ function GeneratePage(props: {
           </div>
         </div>
         <TextArea label={t("generate.detailPrompt")} value={detailPrompt} onChange={handleDetailPromptChange} />
-        <Toggle label={t("generate.transparent")} value={transparentBackground} onChange={setTransparentBackground} />
-        <TargetPicker value={targets} onChange={setTargets} />
-
-        {(assetType === "icon" || assetType === "item" || assetType === "ui") && (
-          <div className="subPanel">
-            <Toggle label={t("generate.makeAtlas")} value={makeAtlas} onChange={setMakeAtlas} />
-          </div>
-        )}
-
-        {assetType === "character" && (
-          <div className="subPanel">
-            <div className="inlineNote compactNote">
-              {t("generate.characterSheetPlan", {
-                versions: count,
-                frames: characterFrameTotal,
-                calls: Math.max(count, 0) * (characterFrameTotal + 1)
-              })}
-            </div>
-            <SelectInput
-              label={t("generate.characterView")}
-              value={characterView}
-              options={characterViewOptions}
-              onChange={setCharacterView}
-            />
-            <AnimationEditor value={animations} onChange={setAnimations} />
-            <Toggle label={t("generate.makeSheet")} value={makeSpriteSheet} onChange={setMakeSpriteSheet} />
-          </div>
-        )}
-
-        {assetType === "tileset" && (
-          <div className="subPanel">
-            <TextInput label={t("generate.tileTheme")} value={tileTheme} onChange={setTileTheme} />
-            <TextArea label={t("generate.tileTypes")} value={tileTypesText} onChange={setTileTypesText} />
-            <Toggle label={t("generate.tileSeamless")} value={tileSeamless} onChange={setTileSeamless} />
-            <Toggle label={t("generate.makeTiled")} value={makeTiled} onChange={setMakeTiled} />
-          </div>
-        )}
-
+        <TextArea label={t("generate.cellNames")} value={cellNamesText} onChange={setCellNamesText} />
       </section>
 
       <section className="panel">
-        <PanelTitle icon={Archive} title={t("generate.execute")} subtitle={t("generate.executeSubtitle")} />
-        <TaskSummary input={input} />
-        <QueuePanel
-          items={props.queueItems}
-          concurrency={props.queueConcurrency}
-          running={props.queueRunning}
-          message={props.queueMessage}
-          canAdd={!(generationMode === "image-to-image" && referenceImages.length === 0)}
-          onAdd={() => props.onQueueAdd(input, input.name || t(assetTypeLabel(input.assetType)))}
-          onRun={props.onQueueRun}
-          onPause={props.onQueuePause}
-          onConcurrencyChange={props.onQueueConcurrencyChange}
-          onRetry={props.onQueueRetry}
-          onRemove={props.onQueueRemove}
-          onClearDone={props.onQueueClearDone}
-          onClearAll={props.onQueueClearAll}
-        />
-      </section>
-    </div>
-  );
-}
-
-function TaskSummary(props: { input: GenerateAssetInput }): JSX.Element {
-  const { t } = useTranslation();
-  const input = props.input;
-  const yesNo = (val: boolean) => val ? t("quality.high") : t("quality.low");
-  const characterFrameTotal = input.animations.reduce((sum, animation) => sum + Math.max(animation.frames, 0), 0);
-  const lines = [
-    ["mode", input.generationMode === "image-to-image" ? t("mode.image-to-image") : t("mode.text-to-image")],
-    ["type", t("assetType." + input.assetType)],
-    ["name", input.name || "—"],
-    ["size", input.size],
-    [input.assetType === "character" ? "characterVersions" : "count", `${input.count}`],
-    ["transparent", yesNo(input.transparentBackground)],
-    ["targets", input.exportTargets.map((et) => t("target." + et)).join(", ") || "—"],
-    ["atlas", yesNo(input.makeAtlas)],
-    ["sheet", yesNo(input.makeSpriteSheet)],
-    ["tiled", yesNo(input.makeTiled)]
-  ];
-
-  if (input.assetType === "character") {
-    lines.splice(5, 0, ["framesPerVersion", `${characterFrameTotal}`]);
-  }
-
-  if (input.generationMode === "image-to-image") {
-    lines.push(["refs", `${input.referenceImages.length}`]);
-    lines.push(["intent", t("intent." + input.editIntent)]);
-    lines.push(["strength", t("strength." + input.referenceStrength)]);
-    lines.push(["mask", input.maskImagePath ? "✓" : "—"]);
-  }
-
-  return (
-    <div className="taskSummary">
-      {lines.map(([key, value]) => (
-        <div key={key}>
-          <span>{t("summary." + key)}</span>
-          <strong>{value}</strong>
-        </div>
-      ))}
-      <section>
-        <span>{t("generate.desc")}</span>
-        <p>{input.description || "—"}</p>
-      </section>
-      {input.detailPrompt && (
-        <section>
-          <span>{t("summary.detail")}</span>
-          <p>{input.detailPrompt}</p>
-        </section>
-      )}
-      {input.generationMode === "image-to-image" && input.referenceImages.length > 0 && (
-        <section>
-          <span>{t("summary.refRoles")}</span>
-          <p>
-            {input.referenceImages
-              .map((image, index) => `${t("summary.refN", { n: index + 1 })}：${t("role." + image.role)}`)
-              .join("；")}
-          </p>
-        </section>
-      )}
-    </div>
-  );
-}
-
-function QueuePanel(props: {
-  items: GenerationQueueItem[];
-  concurrency: number;
-  running: boolean;
-  message: string;
-  canAdd: boolean;
-  onAdd: () => void;
-  onRun: () => void;
-  onPause: () => void;
-  onConcurrencyChange: (value: number) => void;
-  onRetry: (id: string) => void;
-  onRemove: (id: string) => void;
-  onClearDone: () => void;
-  onClearAll: () => void;
-}): JSX.Element {
-  const { t } = useTranslation();
-  const queued = props.items.filter((item) => item.status === "queued").length;
-  const done = props.items.filter((item) => item.status === "done").length;
-  const failed = props.items.filter((item) => item.status === "failed").length;
-
-  return (
-    <div className="queuePanel">
-      <div className="queueHeader">
-        <div>
-          <strong>{t("generate.queueTitle")}</strong>
-          <span>{t("generate.queueSubtitle", { total: props.items.length, queued, done, failed })}</span>
-        </div>
-        <div className="queueConcurrency">
-          <span className="queueConcurrencyLabel" title={t("generate.queueConcurrency")}>{t("generate.queueConcurrency")}</span>
-          {[1, 2, 3].map((value) => (
-            <button
-              key={value}
-              type="button"
-              className={props.concurrency === value ? "selected" : ""}
-              disabled={props.running}
-              onClick={() => props.onConcurrencyChange(value)}
-            >
-              {value}
+        <PanelTitle icon={Archive} title={t("generate.draft")} />
+        {!draft ? (
+          <>
+            <EmptyState text={t("generate.draftEmpty")} />
+            <button className="primaryButton" disabled={!styleReady} onClick={() => void generateDraft()}>
+              <Sparkles size={18} />
+              {t("generate.genGrid")}
             </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="queueActions">
-        <button type="button" className="ghostButton" disabled={!props.canAdd} onClick={props.onAdd}>
-          <Plus size={15} />
-          {t("generate.queueAdd")}
-        </button>
-        <button type="button" className="ghostButton" disabled={props.running || queued === 0} onClick={props.onRun}>
-          <Play size={15} />
-          {t("generate.queueStart")}
-        </button>
-        <button type="button" className="ghostButton" disabled={!props.running} onClick={props.onPause}>
-          <Pause size={15} />
-          {t("generate.queuePause")}
-        </button>
-        <button type="button" className="ghostButton" disabled={props.running || done === 0} onClick={props.onClearDone}>
-          <Check size={15} />
-          {t("generate.queueClearDone")}
-        </button>
-        <button type="button" className="ghostButton" disabled={props.running || props.items.length === 0} onClick={props.onClearAll}>
-          <Trash2 size={15} />
-          {t("generate.queueClearAll")}
-        </button>
-      </div>
-
-      {props.message && <div className="queueMessage">{props.message}</div>}
-
-      <div className="queueList">
-        {props.items.length === 0 && <EmptyState text={t("generate.queueEmptyState")} />}
-        {props.items.map((item, index) => (
-          <article key={item.id} className={`queueItem ${item.status}`}>
-            <div className="queueItemMain">
-              <small>{String(index + 1).padStart(2, "0")} · {t("assetType." + item.input.assetType)}</small>
-              <strong>{item.input.name || "—"}</strong>
-              <span>{item.input.size} · {item.input.count} · {item.input.generationMode === "image-to-image" ? t("mode.image-to-image") : t("mode.text-to-image")}</span>
-              {item.status === "done" && <em>{t("generate.queueResult", { count: item.files ?? 0 })}</em>}
-              {item.error && <code>{item.error}</code>}
+          </>
+        ) : (
+          <>
+            <div className="formGrid">
+              <NumberInput label={t("generate.sliceCols")} value={sliceCols} min={1} max={24} onChange={setSliceCols} />
+              <NumberInput label={t("generate.sliceRows")} value={sliceRows} min={1} max={24} onChange={setSliceRows} />
+              <NumberInput label={t("generate.sliceShiftX")} value={sliceShiftX} min={-256} max={256} onChange={setSliceShiftX} />
+              <NumberInput label={t("generate.sliceShiftY")} value={sliceShiftY} min={-256} max={256} onChange={setSliceShiftY} />
+              <NumberInput label={t("generate.sliceShrink")} value={sliceShrink} min={0} max={30} onChange={setSliceShrink} />
             </div>
-            <div className="queueItemActions">
-              <span>{t("generate.queueStatus." + item.status)}</span>
-              {item.status === "running" && <Loader2 size={14} className="spin" />}
-              {item.status === "failed" && (
-                <button type="button" onClick={() => props.onRetry(item.id)}>
-                  <RefreshCw size={14} />
-                </button>
-              )}
-              {!props.running && item.status !== "running" && (
-                <button type="button" onClick={() => props.onRemove(item.id)}>
-                  <Trash2 size={14} />
-                </button>
-              )}
+            <div className="inlineNote compactNote">
+              {t("generate.sliceHint")}
             </div>
-          </article>
-        ))}
-      </div>
+            {gridDataUrl && previewLines && (
+              <div className="gridStage">
+                <img src={gridDataUrl} alt={t("generate.draft")} />
+                {previewLines.vertical.map((position) => (
+                  <span key={`v-${position}`} className="gridLine vertical" style={{ left: `${position * 100}%` }} />
+                ))}
+                {previewLines.horizontal.map((position) => (
+                  <span key={`h-${position}`} className="gridLine horizontal" style={{ top: `${position * 100}%` }} />
+                ))}
+              </div>
+            )}
+            <div className="assetActions">
+              <button className="primaryButton" onClick={() => void commitDraft()}>
+                <Check size={18} />
+                {t("generate.commit")}
+              </button>
+              <button className="ghostButton" onClick={() => void generateDraft()}>
+                <RefreshCw size={16} />
+                {t("generate.regenGrid")}
+              </button>
+              <button className="ghostButton" onClick={() => setDraft(null)}>
+                <Trash2 size={16} />
+                {t("generate.discard")}
+              </button>
+            </div>
+          </>
+        )}
+      </section>
     </div>
   );
 }
+
 
 function ReferenceImagePanel(props: {
   project: Project;
   value: ReferenceDraft[];
-  maskImage: ReferenceDraft | null;
-  editIntent: EditIntent;
   referenceStrength: ReferenceStrength;
   runTask: <T>(label: string, task: () => Promise<T>, success?: (result: T) => string) => Promise<T | null>;
   onChange: (value: ReferenceDraft[]) => void;
-  onMaskChange: (value: ReferenceDraft | null) => void;
-  onEditIntentChange: (value: EditIntent) => void;
   onReferenceStrengthChange: (value: ReferenceStrength) => void;
 }): JSX.Element {
   const { t } = useTranslation();
@@ -1281,15 +824,6 @@ function ReferenceImagePanel(props: {
     props.onChange(merged);
   }
 
-  async function importMask(): Promise<void> {
-    const imported = await props.runTask(
-      t("busy.importMask"),
-      () => unwrap(window.topspeedBuilder.chooseMaskImage(props.project.path)),
-      () => t("message.maskImported")
-    );
-    if (imported) props.onMaskChange(imported);
-  }
-
   function updateRole(pathValue: string, role: ReferenceImageRole): void {
     props.onChange(props.value.map((image) => (image.path === pathValue ? { ...image, role } : image)));
   }
@@ -1302,30 +836,25 @@ function ReferenceImagePanel(props: {
           <span>{props.value.length}/4 · {t("generate.refHint")}</span>
         </div>
         <div className="referenceActions">
+          <label className="strengthControl">
+            <span>{t("generate.refStrength")}</span>
+            <select
+              value={props.referenceStrength}
+              aria-label={t("generate.refStrength")}
+              onChange={(event) => props.onReferenceStrengthChange(event.target.value as ReferenceStrength)}
+            >
+              {referenceStrengthOptions.map((option) => (
+                <option key={selectOptionValue(option)} value={selectOptionValue(option)}>
+                  {selectOptionLabel(option)}
+                </option>
+              ))}
+            </select>
+          </label>
           <button className="ghostButton" type="button" onClick={importReferences} disabled={props.value.length >= 4}>
             <Plus size={15} />
             {t("generate.importRef")}
           </button>
-          <button className="ghostButton" type="button" onClick={() => props.onChange([])} disabled={props.value.length === 0}>
-            <Trash2 size={15} />
-            {t("generate.clear")}
-          </button>
         </div>
-      </div>
-
-      <div className="formGrid">
-        <SelectInput
-          label={t("generate.editIntent")}
-          value={props.editIntent}
-          options={editIntentOptions}
-          onChange={(value) => props.onEditIntentChange(value as EditIntent)}
-        />
-        <SelectInput
-          label={t("generate.refStrength")}
-          value={props.referenceStrength}
-          options={referenceStrengthOptions}
-          onChange={(value) => props.onReferenceStrengthChange(value as ReferenceStrength)}
-        />
       </div>
 
       {props.value.length === 0 ? (
@@ -1360,40 +889,58 @@ function ReferenceImagePanel(props: {
           ))}
         </div>
       )}
-
-      {props.editIntent === "inpaint" && (
-        <div className="maskPanel">
-          <div>
-            <strong>{t("generate.mask")}</strong>
-            <span>{props.maskImage ? props.maskImage.name ?? props.maskImage.path : t("generate.maskHint")}</span>
-          </div>
-          <button className="ghostButton" type="button" onClick={importMask}>
-            <Brush size={15} />
-            {t("generate.selectMask")}
-          </button>
-          {props.maskImage && (
-            <button className="miniClearButton" type="button" onClick={() => props.onMaskChange(null)}>
-              {t("generate.removeMask")}
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 }
 
-function PreviewPage(props: {
+function AssetsPage(props: {
   project: Project;
+  exportDirectory: string;
   runTask: <T>(label: string, task: () => Promise<T>, success?: (result: T) => string) => Promise<T | null>;
   refreshProject: () => Promise<Project | null>;
+  onOpenSettings: () => void;
   onUseAsReference: (asset: Asset, filePath: string) => void;
 }): JSX.Element {
   const { t } = useTranslation();
+  const canCopy = Boolean(props.exportDirectory.trim());
+
+  async function copyAll(): Promise<void> {
+    const targetDirectory = await props.runTask(
+      t("busy.copyPng"),
+      () => unwrap(window.topspeedBuilder.copyPng(props.project.path)),
+      (directory) => t("assets.copied", { dir: directory })
+    );
+    if (targetDirectory) {
+      await window.topspeedBuilder.openPath(targetDirectory);
+    }
+  }
+
   return (
     <section className="panel wide">
-      <PanelTitle icon={Image} title={t("preview.title")} subtitle={t("preview.subtitle", { count: props.project.assets.length })} />
+      <PanelTitle icon={Image} title={t("assets.title")} subtitle={t("assets.subtitle", { count: props.project.assets.length })} />
+      {!canCopy && (
+        <div className="inlineNote">
+          {t("assets.noDirHint")}
+        </div>
+      )}
+      <div className="assetActions">
+        <button className="ghostButton" onClick={() => void props.refreshProject()}>
+          <RefreshCw size={16} />
+          {t("preview.refresh")}
+        </button>
+        <button className="ghostButton" disabled={!canCopy || props.project.assets.length === 0} onClick={() => void copyAll()}>
+          <Download size={16} />
+          {t("assets.copy")}
+        </button>
+        {!canCopy && (
+          <button className="ghostButton" onClick={props.onOpenSettings}>
+            <Settings size={16} />
+            {t("nav.settings")}
+          </button>
+        )}
+      </div>
       <div className="assetGrid">
-        {props.project.assets.length === 0 && <EmptyState text={t("preview.empty")} />}
+        {props.project.assets.length === 0 && <EmptyState text={t("assets.empty")} />}
         {props.project.assets.map((asset) => (
           <AssetCard
             key={asset.id}
@@ -1403,68 +950,6 @@ function PreviewPage(props: {
             onUseAsReference={props.onUseAsReference}
             onDelete={async () => { await props.refreshProject(); }}
           />
-        ))}
-      </div>
-      <button className="ghostButton" onClick={() => props.refreshProject()}>
-        <RefreshCw size={16} />
-        {t("preview.refresh")}
-      </button>
-    </section>
-  );
-}
-
-function ExportPage(props: {
-  project: Project;
-  runTask: <T>(label: string, task: () => Promise<T>, success?: (result: T) => string) => Promise<T | null>;
-}): JSX.Element {
-  const { t } = useTranslation();
-  const [targets, setTargets] = useState<ExportTarget[]>(props.project.exportTargets);
-  const [includeZip, setIncludeZip] = useState(true);
-
-  return (
-    <section className="panel wide">
-      <PanelTitle icon={Package} title={t("export.title")} subtitle={t("export.subtitle")} />
-      <TargetPicker value={targets} onChange={setTargets} />
-      <Toggle label={t("export.includeZip")} value={includeZip} onChange={setIncludeZip} />
-      <button
-        className="primaryButton"
-        onClick={async () => {
-          const result = await props.runTask(
-            t("busy.exportAssets"),
-            () => unwrap(window.topspeedBuilder.exportProject({ projectPath: props.project.path, targets, includeZip })),
-            (exported) => t("export.done", { count: exported.files.length, dir: exported.exportRoot })
-          );
-          if (result) {
-            await window.topspeedBuilder.openPath(result.exportRoot);
-          }
-        }}
-      >
-        <Download size={18} />
-        {t("export.button")}
-      </button>
-    </section>
-  );
-}
-
-function HistoryPage(props: { project: Project; history: GenerationHistoryRecord[] }): JSX.Element {
-  const { t } = useTranslation();
-  return (
-    <section className="panel wide">
-      <PanelTitle icon={History} title={t("history.title")} subtitle={t("history.subtitle", { count: props.history.length })} />
-      <div className="historyList">
-        {props.history.length === 0 && <EmptyState text={t("history.empty")} />}
-        {props.history.map((record) => (
-          <article key={record.id} className="historyItem">
-            <div>
-              <strong>{record.parameters.name || record.assetType}</strong>
-              <span>
-                {t("assetType." + record.assetType)} · {record.parameters.generationMode === "image-to-image" ? t("mode.image-to-image") : t("mode.text-to-image")} ·{" "}
-                {new Date(record.createdAt).toLocaleString()}
-              </span>
-              <small>{record.outputFiles.join(" · ")}</small>
-            </div>
-            <code>{record.prompt.slice(0, 240)}</code>
-          </article>
         ))}
       </div>
     </section>
@@ -1479,6 +964,7 @@ function SettingsPage(props: {
   const { t } = useTranslation();
   const [draft, setDraft] = useState<AppSettings>(props.settings);
   const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
+  const [dirFeedback, setDirFeedback] = useState<{ ok: boolean; detail: string } | null>(null);
   const [testing, setTesting] = useState(false);
   const [fetchingModels, setFetchingModels] = useState(false);
   useEffect(() => setDraft(props.settings), [props.settings]);
@@ -1534,44 +1020,74 @@ function SettingsPage(props: {
     }
   };
 
+  const pickDirectory = async (field: "defaultProjectRoot" | "defaultExportDirectory"): Promise<void> => {
+    const bridge = window.topspeedBuilder;
+    if (!bridge || typeof bridge.chooseDirectory !== "function") {
+      setDirFeedback({ ok: false, detail: t("settings.dirPickerNoIpc") });
+      return;
+    }
+    setDirFeedback(null);
+    const title = field === "defaultProjectRoot" ? t("settings.pickProjectDir") : t("settings.pickExportDir");
+    try {
+      const result = await bridge.chooseDirectory(title, draft[field] || "");
+      if (result.ok && result.data) {
+        // 路径已回填到输入框，这里无需额外的成功提示
+        setDraft((current) => ({ ...current, [field]: result.data }));
+      } else if (result.error) {
+        setDirFeedback({ ok: false, detail: result.error });
+      }
+    } catch (error) {
+      setDirFeedback({ ok: false, detail: error instanceof Error ? error.message : String(error) });
+    }
+  };
+
   return (
     <section className="panel wide">
-      <PanelTitle icon={Settings} title={t("settings.title")} subtitle={t("settings.subtitle")} />
-      <div className="formGrid three">
-        <SelectInput
-          label={t("settings.aiProvider")}
-          value={draft.aiProvider}
-          options={providerOptions}
-          onChange={(aiProvider) => setDraft({ ...draft, aiProvider: aiProvider as AppSettings["aiProvider"] })}
+      <PanelTitle icon={Settings} title={t("settings.title")} />
+      <div className="formGrid">
+        <DirectoryPicker
+          label={t("settings.defaultProjectDir")}
+          value={draft.defaultProjectRoot}
+          onChange={(defaultProjectRoot) => setDraft({ ...draft, defaultProjectRoot })}
+          onPick={() => void pickDirectory("defaultProjectRoot")}
         />
-        {draft.aiProvider === "custom" && (
-          <SelectInput
-            label={t("settings.customApiFormat")}
-            value={draft.customApiFormat}
-            options={apiFormatOptions}
-            onChange={(customApiFormat) => setDraft({ ...draft, customApiFormat: customApiFormat as AppSettings["customApiFormat"] })}
-          />
-        )}
-        <TextInput label={t("settings.apiBaseUrl")} value={draft.apiBaseUrl} onChange={(apiBaseUrl) => setDraft({ ...draft, apiBaseUrl })} />
-        <TextInput label={t("settings.apiKey")} value={draft.apiKey} type="password" onChange={(apiKey) => setDraft({ ...draft, apiKey })} />
-        <SelectInput
-          label={t("settings.quality")}
-          value={draft.generationQuality}
-          options={qualityOptions}
-          onChange={(generationQuality) => setDraft({ ...draft, generationQuality: generationQuality as AppSettings["generationQuality"] })}
-        />
-        <TextInput label={t("settings.defaultProjectDir")} value={draft.defaultProjectRoot} onChange={(defaultProjectRoot) => setDraft({ ...draft, defaultProjectRoot })} />
-        <TextInput label={t("settings.defaultExportDir")} value={draft.defaultExportDirectory} onChange={(defaultExportDirectory) => setDraft({ ...draft, defaultExportDirectory })} />
-        <TextInput label={t("settings.defaultImageSize")} value={draft.defaultImageSize} onChange={(defaultImageSize) => setDraft({ ...draft, defaultImageSize })} />
-        <NumberInput
-          label={t("settings.defaultGenCount")}
-          value={draft.defaultGenerationCount}
-          min={1}
-          max={64}
-          onChange={(defaultGenerationCount) => setDraft({ ...draft, defaultGenerationCount })}
+        <DirectoryPicker
+          label={t("settings.defaultExportDir")}
+          value={draft.defaultExportDirectory}
+          onChange={(defaultExportDirectory) => setDraft({ ...draft, defaultExportDirectory })}
+          onPick={() => void pickDirectory("defaultExportDirectory")}
         />
       </div>
+      {dirFeedback && (
+        <p
+          style={{
+            margin: "-8px 0 0",
+            fontSize: 13,
+            color: "#f87171",
+            wordBreak: "break-all"
+          }}
+        >
+          {t("settings.dirPickerFail")}: {dirFeedback.detail}
+        </p>
+      )}
 
+      <div className="sectionRule" />
+
+      <div className="inlineNote">
+        {t("settings.imageEndpointHint")}
+      </div>
+      <div className="formGrid apiGrid">
+        <TextInput label={t("settings.apiBaseUrl")} value={draft.apiBaseUrl} onChange={(apiBaseUrl) => setDraft({ ...draft, apiBaseUrl })} />
+        <TextInput label={t("settings.apiKey")} value={draft.apiKey} type="password" onChange={(apiKey) => setDraft({ ...draft, apiKey })} />
+        <button
+          className="ghostButton"
+          disabled={fetchingModels}
+          onClick={fetchModels}
+        >
+          {fetchingModels ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+          <span>{fetchingModels ? t("settings.fetchingModels") : t("settings.fetchModels")}</span>
+        </button>
+      </div>
       <div className="modelActionBlock">
         <label className="field">
           <span>{t("settings.model")}</span>
@@ -1584,16 +1100,8 @@ function SettingsPage(props: {
         </label>
         <button
           className="ghostButton"
-          disabled={fetchingModels || draft.aiProvider === "local-draft"}
-          onClick={fetchModels}
-        >
-          {fetchingModels ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
-          <span>{fetchingModels ? t("settings.fetchingModels") : t("settings.fetchModels")}</span>
-        </button>
-        <button
-          className="primaryButton"
-          style={{ marginBottom: 0, whiteSpace: "nowrap" }}
-          disabled={testing || draft.aiProvider === "local-draft"}
+          style={{ whiteSpace: "nowrap" }}
+          disabled={testing}
           onClick={runTest}
         >
           {testing ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
@@ -1604,12 +1112,6 @@ function SettingsPage(props: {
             {testResult.ok ? `${t("settings.testOk")} · ${testResult.detail}` : `${t("settings.testFail")}: ${testResult.detail}`}
           </span>
         )}
-      </div>
-      <div className="toggleRow">
-        <Toggle label={t("settings.savePromptHistory")} value={draft.savePromptHistory} onChange={(savePromptHistory) => setDraft({ ...draft, savePromptHistory })} />
-        <Toggle label={t("settings.autoTransparent")} value={draft.autoTransparent} onChange={(autoTransparent) => setDraft({ ...draft, autoTransparent })} />
-        <Toggle label={t("settings.autoTrim")} value={draft.autoTrim} onChange={(autoTrim) => setDraft({ ...draft, autoTrim })} />
-        <Toggle label={t("settings.autoPackAtlas")} value={draft.autoPackAtlas} onChange={(autoPackAtlas) => setDraft({ ...draft, autoPackAtlas })} />
       </div>
       <button
         className="primaryButton"
@@ -1625,12 +1127,35 @@ function SettingsPage(props: {
   );
 }
 
-function selectPreviewFile(asset: Asset): string | undefined {
+function DirectoryPicker(props: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  onPick: () => void;
+}): JSX.Element {
+  const { t } = useTranslation();
+  return (
+    <div className="dirPicker">
+      <label className="field">
+        <span>{props.label}</span>
+        <input
+          type="text"
+          value={props.value}
+          placeholder={t("field.notSet")}
+          onChange={(event) => props.onChange(event.target.value)}
+        />
+      </label>
+      <button type="button" className="ghostButton" onClick={props.onPick}>
+        <FolderOpen size={15} />
+        {t("field.chooseDir")}
+      </button>
+    </div>
+  );
+}
+
+function selectPreviewFile(asset: Asset): string {
   const pngFiles = asset.files.filter((file) => file.toLowerCase().endsWith(".png"));
-  if (asset.type === "character") {
-    return asset.sheetPath ?? pngFiles.find((file) => file.includes("source_sheet")) ?? pngFiles[0];
-  }
-  return pngFiles[0] ?? asset.atlasPath;
+  return pngFiles[0] ?? asset.files[0] ?? "";
 }
 
 function AssetCard(props: {
@@ -1641,47 +1166,60 @@ function AssetCard(props: {
   onDelete?: () => Promise<void>;
 }): JSX.Element {
   const { t } = useTranslation();
-  const pngFile = selectPreviewFile(props.asset);
-  const [dataUrl, setDataUrl] = useState("");
+  const pngFiles = props.asset.files.filter((file) => file.toLowerCase().endsWith(".png")).slice(0, 24);
+  const [thumbnails, setThumbnails] = useState<string[]>([]);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const previewFile = pngFiles[activeIndex % Math.max(pngFiles.length, 1)] ?? "";
 
   useEffect(() => {
     let alive = true;
-    setDataUrl("");
-    if (pngFile) {
-      window.topspeedBuilder.readImageDataUrl(props.project.path, pngFile).then((result) => {
-        if (alive && result.ok && result.data) setDataUrl(result.data);
-        if (alive && (!result.ok || !result.data)) setDataUrl("");
-      });
+    setThumbnails([]);
+    setActiveIndex(0);
+    if (pngFiles.length === 0) {
+      return () => { alive = false; };
     }
+    Promise.all(
+      pngFiles.map((file) =>
+        window.topspeedBuilder.readImageDataUrl(props.project.path, file).then((result) => (result.ok && result.data ? result.data : ""))
+      )
+    ).then((urls) => {
+      if (alive) setThumbnails(urls);
+    });
     return () => {
       alive = false;
     };
-  }, [pngFile, props.project.path]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.project.path, props.asset.id]);
+
+  const activeThumbnail = thumbnails[activeIndex % Math.max(thumbnails.length, 1)] ?? "";
+  const firstFile = pngFiles[0] ?? props.asset.metadataPath;
 
   return (
     <article className="assetCard">
-      <div className="assetPreview">{dataUrl ? <img src={dataUrl} alt={props.asset.name} /> : <Boxes size={42} />}</div>
-      <div className="assetBody">
-        <strong>{props.asset.name}</strong>
-        <span>{t("assetType." + props.asset.type)} · {props.asset.size.width}x{props.asset.size.height}</span>
-        <small>{props.asset.files.length} {t("preview.files")}</small>
-      </div>
-      <div className="assetActions">
-        {props.asset.generationMode === "image-to-image" && <Pill>参考图</Pill>}
-        {props.asset.sheetPath && <Pill>精灵表</Pill>}
-        {props.asset.atlasPath && <Pill>图集</Pill>}
-        {props.asset.metadataPath && <Pill>元数据</Pill>}
-      </div>
-      {props.asset.exportTargets && props.asset.exportTargets.length > 0 && (
-        <div className="assetActions" style={{ gap: 4 }}>
-          {props.asset.exportTargets.map((target) => (
-            <span key={target} className="pill" style={{ borderColor: "rgba(0,212,255,0.25)", color: "var(--cyan)", background: "var(--cyan-dim)" }}>{t("target." + target)}</span>
+      <div className="assetPreview">{activeThumbnail ? <img src={activeThumbnail} alt={props.asset.name} /> : <Boxes size={42} />}</div>
+      {pngFiles.length > 1 && (
+        <div className="assetThumbs">
+          {thumbnails.map((url, index) => (
+            <button
+              key={pngFiles[index]}
+              type="button"
+              className={index === activeIndex ? "active" : ""}
+              title={pngFiles[index]}
+              onClick={() => setActiveIndex(index)}
+            >
+              {url ? <img src={url} alt="" /> : null}
+            </button>
           ))}
         </div>
       )}
+      <div className="assetBody">
+        <strong>{props.asset.name}</strong>
+        <span>{t("assetType." + props.asset.type)} · {props.asset.files.length} {t("preview.files")}</span>
+        <small>{props.asset.createdAt ? new Date(props.asset.createdAt).toLocaleString() : ""}</small>
+      </div>
       <div className="assetActions" style={{ marginTop: "auto" }}>
-        {pngFile && props.onUseAsReference && (
-          <button className="ghostButton" onClick={() => props.onUseAsReference?.(props.asset, pngFile)}>
+        {firstFile && props.onUseAsReference && (
+          <button className="ghostButton" onClick={() => props.onUseAsReference?.(props.asset, firstFile)}>
             <Image size={15} />
             参考
           </button>
@@ -1689,7 +1227,7 @@ function AssetCard(props: {
         <button
           className="ghostButton"
           onClick={() => {
-            const file = props.asset.metadataPath ?? pngFile;
+            const file = props.asset.metadataPath ?? previewFile;
             if (file) {
               void props.runTask(t("busy.locateFile"), () => unwrap(window.topspeedBuilder.showProjectItemInFolder(props.project.path, file)));
             }
@@ -1719,91 +1257,16 @@ function AssetCard(props: {
   );
 }
 
-function AnimationEditor(props: { value: AnimationConfig[]; onChange: (value: AnimationConfig[]) => void }): JSX.Element {
-  const { t } = useTranslation();
-
-  function update(index: number, patch: Partial<AnimationConfig>): void {
-    props.onChange(props.value.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)));
-  }
-
-  function remove(index: number): void {
-    props.onChange(props.value.filter((_, itemIndex) => itemIndex !== index));
-  }
-
-  return (
-    <div className="animationEditor">
-      <label>{t("generate.animFrames")}</label>
-      <p className="animationHelp">{t("generate.animHelp")}</p>
-      <div className="animationHeader" aria-hidden="true">
-        <span>{t("generate.animName")}</span>
-        <span>{t("generate.animFrameCount")}</span>
-        <span>{t("generate.animFps")}</span>
-        <span>{t("generate.animLoop")}</span>
-        <span />
-      </div>
-      {props.value.map((animation, index) => (
-        <div key={`${animation.name}-${index}`} className="animationRow">
-          <input
-            aria-label={t("generate.animName")}
-            title={t("generate.animName")}
-            value={animation.name}
-            onChange={(event) => update(index, { name: event.target.value })}
-          />
-          <input
-            type="number"
-            min={1}
-            max={12}
-            aria-label={t("generate.animFrameCountHint")}
-            title={t("generate.animFrameCountHint")}
-            value={animation.frames}
-            onChange={(event) => update(index, { frames: Number(event.target.value) })}
-          />
-          <input
-            type="number"
-            min={1}
-            max={30}
-            aria-label={t("generate.animFpsHint")}
-            title={t("generate.animFpsHint")}
-            value={animation.fps}
-            onChange={(event) => update(index, { fps: Number(event.target.value) })}
-          />
-          <button type="button" title={t("generate.animLoopHint")} onClick={() => update(index, { loop: !animation.loop })}>
-            {animation.loop ? t("generate.loop") : t("generate.once")}
-          </button>
-          <button
-            type="button"
-            className="animDelete"
-            title={t("generate.removeAnim")}
-            aria-label={t("generate.removeAnim")}
-            disabled={props.value.length <= 1}
-            onClick={() => remove(index)}
-          >
-            <Trash2 size={14} />
-          </button>
-        </div>
-      ))}
-      <button
-        className="ghostButton"
-        type="button"
-        onClick={() => props.onChange([...props.value, { name: "受击", frames: 4, fps: 8, loop: false }])}
-      >
-        <Plus size={15} />
-        {t("generate.addAnim")}
-      </button>
-    </div>
-  );
-}
-
-function PanelTitle(props: { icon: typeof Home; title: string; subtitle: string }): JSX.Element {
+function PanelTitle(props: { icon: typeof Home; title: string; subtitle?: string }): JSX.Element {
   const Icon = props.icon;
   return (
-    <div className="panelTitle">
+    <div className={props.subtitle ? "panelTitle" : "panelTitle center"}>
       <div className="panelIcon">
         <Icon size={18} />
       </div>
       <div>
         <h2>{props.title}</h2>
-        <p>{props.subtitle}</p>
+        {props.subtitle && <p>{props.subtitle}</p>}
       </div>
     </div>
   );
@@ -1869,32 +1332,20 @@ function SelectInput(props: { label: string; value: string; options: SelectOptio
   );
 }
 
-function Toggle(props: { label: string; value: boolean; onChange: (value: boolean) => void }): JSX.Element {
+function DeckToggle(props: { label: string; value: boolean; onChange: (value: boolean) => void }): JSX.Element {
   return (
-    <button className={props.value ? "toggle on" : "toggle"} onClick={() => props.onChange(!props.value)}>
+    <label className="field">
       <span>{props.label}</span>
-      <i />
-    </button>
-  );
-}
-
-function TargetPicker(props: { value: ExportTarget[]; onChange: (value: ExportTarget[]) => void }): JSX.Element {
-  const { t } = useTranslation();
-  function toggle(target: ExportTarget): void {
-    props.onChange(props.value.includes(target) ? props.value.filter((item) => item !== target) : [...props.value, target]);
-  }
-
-  return (
-    <div className="targetPicker">
-      <span>{t("targetPicker.label")}</span>
-      <div>
-        {exportTargets.map((target) => (
-          <button key={target} className={props.value.includes(target) ? "selected" : ""} onClick={() => toggle(target)}>
-            {t("target." + target)}
-          </button>
-        ))}
-      </div>
-    </div>
+      <button
+        type="button"
+        className={props.value ? "deckSwitch on" : "deckSwitch"}
+        aria-pressed={props.value}
+        title={props.label}
+        onClick={() => props.onChange(!props.value)}
+      >
+        <i />
+      </button>
+    </label>
   );
 }
 
@@ -1909,34 +1360,29 @@ function EmptyState(props: { text: string }): JSX.Element {
 function pageLabel(page: Page): string {
   const labels: Record<Page, string> = {
     home: "项目首页",
-    project: "项目配置",
     generate: "素材生成",
-    preview: "素材预览",
-    export: "资源导出",
-    history: "历史记录",
+    assets: "素材库",
     settings: "应用设置"
   };
   return labels[page];
 }
 
-function presetsFor(type: AssetType, defaultSize: string): { name: string; description: string; size: string; transparentBackground: boolean } {
+function presetsFor(type: AssetType): { name: string; description: string; size: string; count: number; transparentBackground: boolean } {
   switch (type) {
-    case "character":
-      return { name: "骑士", description: "银色盔甲骑士，手持短剑", size: "64x64", transparentBackground: true };
-    case "tileset":
-      return { name: "地牢", description: "石质地牢模块化瓦片集", size: "32x32", transparentBackground: false };
     case "icon":
-      return { name: "角色扮演道具", description: "中世纪背包图标，轮廓清晰易识别", size: defaultSize, transparentBackground: true };
+      return { name: "角色扮演道具", description: "中世纪背包道具，风格统一", size: "1024x1024", count: 8, transparentBackground: true };
     case "item":
-      return { name: "角色扮演道具", description: "中世纪背包道具，轮廓清晰易识别", size: defaultSize, transparentBackground: true };
+      return { name: "角色扮演道具", description: "中世纪背包道具，风格统一", size: "1024x1024", count: 8, transparentBackground: true };
+    case "character":
+      return { name: "骑士", description: "银色盔甲骑士战士", size: "1024x1024", count: 4, transparentBackground: true };
     case "enemy":
-      return { name: "史莱姆", description: "小型地牢软体怪，轮廓清晰", size: defaultSize, transparentBackground: true };
+      return { name: "怪物", description: "地牢怪物，轮廓清晰", size: "1024x1024", count: 6, transparentBackground: true };
     case "ui":
-      return { name: "界面面板", description: "游戏界面面板元素，干净扁平风格", size: defaultSize, transparentBackground: true };
+      return { name: "界面控件", description: "游戏界面控件元素，干净扁平风格", size: "1024x1024", count: 6, transparentBackground: true };
     case "background":
-      return { name: "森林背景", description: "横版卷轴森林背景层", size: "128x128", transparentBackground: false };
+      return { name: "背景", description: "横版卷轴背景层，无角色", size: "1536x1024", count: 3, transparentBackground: false };
     case "effect":
-      return { name: "火焰特效", description: "火焰爆炸粒子精灵表", size: "64x64", transparentBackground: true };
+      return { name: "特效", description: "游戏特效单体形态，风格统一", size: "1024x1024", count: 6, transparentBackground: true };
   }
 }
 
@@ -1945,17 +1391,6 @@ function splitLines(value: string): string[] {
     .split(/[\n,，]/)
     .map((item) => item.trim())
     .filter(Boolean);
-}
-
-function snapshotGenerateInput(source: GenerateAssetInput): GenerateAssetInput {
-  return {
-    ...source,
-    referenceImages: source.referenceImages.map((reference) => ({ ...reference })),
-    exportTargets: [...source.exportTargets],
-    iconItems: [...source.iconItems],
-    animations: source.animations.map((animation) => ({ ...animation })),
-    tileTypes: [...source.tileTypes]
-  };
 }
 
 function toReferenceInput(image: ReferenceDraft): ReferenceImageInput {
@@ -1975,11 +1410,6 @@ function selectOptionLabel(option: SelectOption): string {
   return typeof option === "string" ? option : option.label;
 }
 
-function providerLabel(provider: AppSettings["aiProvider"]): string {
-  const found = providerOptions.find((option) => selectOptionValue(option) === provider);
-  return found ? selectOptionLabel(found) : provider;
-}
-
 function assetTypeLabel(assetType: AssetType): string {
   const found = assetTypes.find((option) => option.value === assetType);
   return found ? found.label : assetType;
@@ -1992,12 +1422,6 @@ function gameTypeLabel(gameType: string): string {
 function gameTypeLabelT(t: (key: string) => string, gameType: string): string {
   const found = gameTypeOptions.find((option) => selectOptionValue(option) === gameType);
   return found ? t(selectOptionLabel(found)) : gameType;
-}
-
-function formatQueueError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  const normalized = message.replace(/\s+/g, " ").trim();
-  return normalized.length > 180 ? `${normalized.slice(0, 180)}...` : normalized;
 }
 
 async function unwrap<T>(request: Promise<IpcResponse<T>>): Promise<T> {

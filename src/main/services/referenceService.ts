@@ -33,26 +33,10 @@ export class ReferenceService {
     return imported;
   }
 
-  async chooseMask(projectPath: string): Promise<ImportedReferenceImage> {
-    const result = await dialog.showOpenDialog({
-      title: "选择局部编辑蒙版图片",
-      filters: [{ name: "PNG 蒙版", extensions: ["png"] }],
-      properties: ["openFile"]
-    });
-
-    if (result.canceled || result.filePaths.length === 0) {
-      throw new Error("已取消选择蒙版");
-    }
-
-    const imported = await this.importImage(projectPath, result.filePaths[0], "references/masks", true);
-    return imported;
-  }
-
   private async importImage(
     projectPath: string,
     sourcePath: string,
-    destinationDirectory: string,
-    requireAlpha = false
+    destinationDirectory: string
   ): Promise<ImportedReferenceImage> {
     await ensureProjectDirectories(projectPath);
 
@@ -60,10 +44,6 @@ export class ReferenceService {
     const mime = MIME_BY_EXTENSION[extension];
     if (!mime) {
       throw new Error(`不支持的参考图格式：${extension || "未知"}，仅支持 PNG/JPG/WebP。`);
-    }
-
-    if (requireAlpha && extension !== ".png") {
-      throw new Error("蒙版必须是带透明通道的 PNG 文件。");
     }
 
     const stats = await fs.stat(sourcePath);
@@ -74,10 +54,6 @@ export class ReferenceService {
     const metadata = await sharp(sourcePath).metadata();
     if (!metadata.width || !metadata.height) {
       throw new Error(`无法读取参考图尺寸：${sourcePath}`);
-    }
-
-    if (requireAlpha && !metadata.hasAlpha) {
-      throw new Error("蒙版图片必须包含透明通道；透明区域表示可编辑区域。");
     }
 
     const buffer = await fs.readFile(sourcePath);

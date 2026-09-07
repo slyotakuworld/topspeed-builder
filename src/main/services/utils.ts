@@ -5,19 +5,8 @@ const fileLocks = new Map<string, Promise<void>>();
 
 export const PROJECT_DIRECTORIES = [
   "generated/raw",
-  "generated/processed",
-  "sprites/characters",
-  "sprites/enemies",
-  "icons/items",
-  "icons/skills",
-  "icons/ui",
-  "tilesets",
-  "sheets",
-  "atlas",
-  "exports",
-  "history",
+  "sprites",
   "references/images",
-  "references/masks",
   "references/thumbnails"
 ];
 

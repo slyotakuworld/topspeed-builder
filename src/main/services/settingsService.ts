@@ -25,25 +25,13 @@ export class SettingsService {
   }
 
   private async getDefaultSettings(): Promise<AppSettings> {
-    const projectRoot = path.join(app.getPath("documents"), "Topspeed Builder Projects");
-    await fs.ensureDir(projectRoot);
-
     return {
-      aiProvider: "openai",
-      customApiFormat: "openai-image",
       apiKey: "",
-      apiBaseUrl: "https://api.openai.com/v1/images/generations",
-      model: "gpt-image-1.5",
+      apiBaseUrl: "",
+      model: "",
       availableModels: [],
-      defaultProjectRoot: projectRoot,
-      defaultExportDirectory: "",
-      defaultImageSize: "64x64",
-      defaultGenerationCount: 1,
-      savePromptHistory: true,
-      autoTransparent: true,
-      autoTrim: true,
-      autoPackAtlas: true,
-      generationQuality: "low"
+      defaultProjectRoot: "",
+      defaultExportDirectory: ""
     };
   }
 
@@ -67,23 +55,12 @@ export class SettingsService {
   private readLooseSettings(raw: string): Partial<AppSettings> {
     const output: Partial<AppSettings> = {};
 
-    this.readLooseString(raw, output, "aiProvider");
-    this.readLooseString(raw, output, "customApiFormat");
     this.readLooseString(raw, output, "apiKey");
     this.readLooseString(raw, output, "apiBaseUrl");
     this.readLooseString(raw, output, "model");
     this.readLooseArray(raw, output, "availableModels");
     this.readLooseString(raw, output, "defaultProjectRoot");
     this.readLooseString(raw, output, "defaultExportDirectory");
-    this.readLooseString(raw, output, "defaultImageSize");
-    this.readLooseString(raw, output, "generationQuality");
-
-    this.readLooseNumber(raw, output, "defaultGenerationCount");
-
-    this.readLooseBoolean(raw, output, "savePromptHistory");
-    this.readLooseBoolean(raw, output, "autoTransparent");
-    this.readLooseBoolean(raw, output, "autoTrim");
-    this.readLooseBoolean(raw, output, "autoPackAtlas");
 
     return output;
   }
@@ -105,20 +82,6 @@ export class SettingsService {
       }
     } catch {
       // 损坏的数组字面量忽略，回落到默认空数组
-    }
-  }
-
-  private readLooseNumber<K extends keyof AppSettings>(raw: string, output: Partial<AppSettings>, key: K): void {
-    const match = raw.match(new RegExp(`"${String(key)}"\\s*:\\s*(\\d+)`));
-    if (match) {
-      output[key] = Number(match[1]) as AppSettings[K];
-    }
-  }
-
-  private readLooseBoolean<K extends keyof AppSettings>(raw: string, output: Partial<AppSettings>, key: K): void {
-    const match = raw.match(new RegExp(`"${String(key)}"\\s*:\\s*(true|false)`));
-    if (match) {
-      output[key] = (match[1] === "true") as AppSettings[K];
     }
   }
 

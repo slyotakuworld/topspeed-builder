@@ -9,6 +9,8 @@ vite-renderer.err.log
 *.zip
 *.asar
 *.mp4
+# electron-vite 加载 TS 配置产生的临时文件（正常会自删，进程被中断时残留）
+electron.vite.config.*.mjs
 .DS_Store
 Thumbs.db
 # 本地备份副本与工作数据，不推送到远程

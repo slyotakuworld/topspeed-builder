@@ -26,9 +26,10 @@ export class AIGenerationService {
       throw new Error("接口地址为空。请在设置页配置 API 接口地址。");
     }
 
-    const endpoint = args.settings.apiBaseUrl.trim();
-    this.assertHttpEndpoint(endpoint, "自定义接口基础地址");
+    const rawEndpoint = args.settings.apiBaseUrl.trim();
+    this.assertHttpEndpoint(rawEndpoint, "自定义接口基础地址");
     const useReference = (args.referenceImages?.length ?? 0) > 0;
+    const endpoint = this.resolveImageEndpoint(rawEndpoint, useReference);
 
     return this.generateWithCustomImageFormat(args, endpoint, useReference);
   }
@@ -44,7 +45,11 @@ export class AIGenerationService {
     } catch (err) {
       return { ok: false, status: 0, detail: err instanceof Error ? err.message : String(err) };
     }
-
+    // 连接测试走模型列表接口 GET {root}/models（与「拉取模型」同一地址解析语义）：
+    // 1) /models 响应快——不像真实出图那样要等数十秒到数分钟，不会被短超时误杀；
+    // 2) 大多数 OpenAI 兼容网关（如 aixoras / new-api 中转）对 /models 同样要求鉴权，
+    //    因此可以同时验证 API Key（无 key 会返回 401/403）。
+    const modelsUrl = `${this.resolveApiRoot(baseUrl)}/models`;
     const headers: Record<string, string> = {
       "Content-Type": "application/json"
     };
@@ -52,41 +57,47 @@ export class AIGenerationService {
       headers.Authorization = `Bearer ${settings.apiKey.trim()}`;
     }
 
-    const testBody = JSON.stringify({
-      model: settings.model || "gpt-image-1.5",
-      prompt: "test",
-      n: 0,
-      size: "256x256"
-    });
-
     try {
-      const response = await fetch(baseUrl, {
-        method: "POST",
+      const response = await fetch(modelsUrl, {
+        method: "GET",
         headers,
-        body: testBody,
-        signal: AbortSignal.timeout(15000)
+        signal: AbortSignal.timeout(20000)
       });
 
       const responseText = await response.text();
-      const detail = `HTTP ${response.status} · ${this.summarizeBody(responseText)}`;
-
       if (response.ok) {
+        let modelCount = -1;
+        try {
+          const json = JSON.parse(responseText);
+          const list = Array.isArray(json.data) ? json.data : Array.isArray(json.models) ? json.models : [];
+          modelCount = list.length;
+        } catch {
+          // 返回体不是 JSON 也视为连通成功（部分网关 /models 形态不同）
+        }
+        const detail =
+          modelCount >= 0
+            ? `接口连通（HTTP 200），鉴权通过，模型列表共 ${modelCount} 个。`
+            : "接口连通（HTTP 200）。";
         return { ok: true, status: response.status, detail };
       }
 
-      if (response.status === 400) {
-        return { ok: true, status: response.status, detail: `接口连通，鉴权通过（服务端以 HTTP 400 拒绝了测试参数，无实际图片生成）` };
-      }
-
       if (response.status === 401 || response.status === 403) {
-        return { ok: false, status: response.status, detail: `鉴权失败(${response.status})：请检查 API Key 是否正确。${this.summarizeBody(responseText)}` };
+        return {
+          ok: false,
+          status: response.status,
+          detail: `鉴权失败(${response.status})：请检查 API Key 是否正确。${this.summarizeBody(responseText)}`
+        };
       }
 
       if (response.status === 404) {
-        return { ok: false, status: response.status, detail: `接口地址未找到(404)：请检查 API Base URL 路径是否正确。${this.summarizeBody(responseText)}` };
+        return {
+          ok: false,
+          status: response.status,
+          detail: `接口地址未找到(404)：请检查 API Base URL 路径是否正确。${this.summarizeBody(responseText)}`
+        };
       }
 
-      return { ok: false, status: response.status, detail };
+      return { ok: false, status: response.status, detail: `HTTP ${response.status} · ${this.summarizeBody(responseText)}` };
     } catch (error) {
       const message = this.describeFetchError(error);
       if (message.includes("ENOTFOUND") || message.includes("not found") || message.includes("DNS")) {
@@ -95,8 +106,18 @@ export class AIGenerationService {
       if (message.includes("ECONNREFUSED") || message.includes("refused")) {
         return { ok: false, status: 0, detail: `连接被拒绝：服务器拒绝连接，请检查地址和端口是否正确。 详情: ${message}` };
       }
-      if (message.includes("timed out") || message.includes("ETIMEDOUT") || message.includes("AbortError")) {
-        return { ok: false, status: 0, detail: `连接超时：服务器无响应，请检查网络和 API 地址。 详情: ${message}` };
+      if (
+        message.includes("超时") ||
+        message.includes("aborted") ||
+        message.includes("timed out") ||
+        message.includes("ETIMEDOUT") ||
+        message.includes("AbortError")
+      ) {
+        return {
+          ok: false,
+          status: 0,
+          detail: `连接超时（20 秒内 ${modelsUrl} 无响应）：请检查网络是否可访问该 API 域名；若是海外/代理服务，请确认代理已生效或换国内可达的网关。 详情: ${message}`
+        };
       }
       if (message.includes("SSL") || message.includes("CERT") || message.includes("self signed") || message.includes("DEPTH_ZERO")) {
         return { ok: false, status: 0, detail: `SSL/证书错误：${message}` };
@@ -137,62 +158,117 @@ export class AIGenerationService {
     useReference: boolean
   ): Promise<Buffer> {
     if (useReference) {
-      const form = new FormData();
-      form.append("prompt", args.prompt);
-      form.append("size", args.size);
-      form.append("model", args.settings.model);
-      form.append("transparentBackground", String(args.transparentBackground));
-      form.append("editIntent", args.editIntent ?? "");
-      form.append("referenceStrength", args.referenceStrength ?? "");
-      form.append(
-        "referenceImages",
-        JSON.stringify(
-          (args.referenceImages ?? []).map((reference) => ({
-            role: reference.role,
-            name: reference.name,
-            sourceAssetId: reference.sourceAssetId
-          }))
-        )
-      );
+      const buildReferenceForm = async (includeQuality: boolean): Promise<FormData> => {
+        const form = new FormData();
+        form.append("prompt", args.prompt);
+        form.append("size", args.size);
+        form.append("model", args.settings.model);
+        // OpenAI 标准透明背景字段；关闭时缺省即为不透明/auto
+        if (args.transparentBackground) {
+          form.append("background", "transparent");
+        }
+        form.append("editIntent", args.editIntent ?? "");
+        form.append("referenceStrength", args.referenceStrength ?? "");
+        // 生成质量为可选透传参数；服务端不支持时自动回退为不带 quality 的请求重试
+        if (includeQuality && args.quality) {
+          form.append("quality", args.quality);
+        }
+        form.append(
+          "referenceImages",
+          JSON.stringify(
+            (args.referenceImages ?? []).map((reference) => ({
+              role: reference.role,
+              name: reference.name,
+              sourceAssetId: reference.sourceAssetId
+            }))
+          )
+        );
 
-      for (const reference of args.referenceImages ?? []) {
-        form.append("image", await this.fileToBlob(reference.filePath), path.basename(reference.filePath));
+        for (const reference of args.referenceImages ?? []) {
+          form.append("image", await this.fileToBlob(reference.filePath), path.basename(reference.filePath));
+        }
+        return form;
+      };
+
+      const sendReferenceForm = async (includeQuality: boolean): Promise<Response> =>
+        this.fetchWithContext(
+          endpoint,
+          {
+            method: "POST",
+            headers: {
+              ...(args.settings.apiKey ? { Authorization: `Bearer ${args.settings.apiKey}` } : {})
+            },
+            body: await buildReferenceForm(includeQuality)
+          },
+          "自定义接口"
+        );
+
+      let response = await sendReferenceForm(true);
+      if (!response.ok && args.quality) {
+        const responseText = await response.text();
+        if (this.isUnsupportedImageOptionError(response.status, responseText)) {
+          response = await sendReferenceForm(false);
+        } else {
+          throw new Error(
+            `图片接口失败: HTTP ${response.status} ${response.statusText}. ${this.summarizeBody(responseText)}`
+          );
+        }
       }
-
-      const response = await this.fetchWithContext(endpoint, {
-        method: "POST",
-        headers: {
-          ...(args.settings.apiKey ? { Authorization: `Bearer ${args.settings.apiKey}` } : {})
-        },
-        body: form
-      }, "自定义接口");
 
       return this.readImageResponse(response, "自定义接口", endpoint);
     }
 
-    const basePayload: Record<string, unknown> = {
-      prompt: args.prompt,
-      size: args.size,
-      model: args.settings.model,
-      transparentBackground: args.transparentBackground
+    // ---- 无参考图：JSON 通道（OpenAI Images 标准参数 + 降级链）----
+    // 只发送 OpenAI 标准字段：prompt / size / model / quality / background。
+    // 不同网关差异仅在于对可选字段的支持度：宽松网关（如 Gitee AI）忽略未知可选字段，
+    // 严格网关（new-api / OpenAI 官方）对不支持的参数直接 400。
+    // 依次尝试：带质量+透明 → 去掉质量 → 去掉透明，直到网关接受。
+    const wantsTransparent = args.transparentBackground === true;
+    const wantsQuality = Boolean(args.quality);
+
+    const buildPayload = (useQuality: boolean, withTransparent: boolean): Record<string, unknown> => {
+      const payload: Record<string, unknown> = {
+        prompt: args.prompt,
+        size: args.size,
+        model: args.settings.model
+      };
+      if (useQuality && args.quality) {
+        payload.quality = args.quality;
+      }
+      if (withTransparent) {
+        payload.background = "transparent";
+      }
+      return payload;
     };
 
-    // 生成质量为可选透传参数；服务端不支持时自动回退为不带 quality 的请求重试
-    const withQuality = args.quality ? { ...basePayload, quality: args.quality } : null;
-    let response = await this.postJson(endpoint, args.settings.apiKey, withQuality ?? basePayload);
-
-    if (!response.ok && withQuality) {
-      const responseText = await response.text();
-      if (this.isUnsupportedImageOptionError(response.status, responseText)) {
-        response = await this.postJson(endpoint, args.settings.apiKey, basePayload);
-      } else {
-        throw new Error(
-          `图片接口失败: HTTP ${response.status} ${response.statusText}. ${this.summarizeBody(responseText)}`
-        );
-      }
+    const candidates: Array<{ q: boolean; bg: boolean }> = [{ q: wantsQuality, bg: wantsTransparent }];
+    if (wantsQuality) {
+      candidates.push({ q: false, bg: wantsTransparent });
+    }
+    if (wantsTransparent) {
+      // 网关不支持 transparent 背景时，放弃透明以保证能出图
+      candidates.push({ q: false, bg: false });
     }
 
-    return this.readImageResponse(response, "自定义接口", endpoint);
+    let lastStatus = 0;
+    let lastErrorText = "";
+    for (const candidate of candidates) {
+      const response = await this.postJson(endpoint, args.settings.apiKey, buildPayload(candidate.q, candidate.bg));
+      if (response.ok) {
+        return this.readImageResponse(response, "自定义接口", endpoint);
+      }
+      const body = await response.text();
+      if (!this.isUnsupportedImageOptionError(response.status, body)) {
+        throw new Error(`图片接口失败: HTTP ${response.status} ${response.statusText}. ${this.summarizeBody(body)}`);
+      }
+      lastStatus = response.status;
+      lastErrorText = body;
+    }
+
+    throw new Error(
+      `图片接口失败: HTTP ${lastStatus}。服务端拒绝了所有请求参数组合（含质量/透明背景等可选参数）。` +
+        (lastErrorText ? ` 最后一条响应: ${this.summarizeBody(lastErrorText)}` : "")
+    );
   }
 
   private async postJson(endpoint: string, apiKey: string, payload: Record<string, unknown>): Promise<Response> {
@@ -224,6 +300,8 @@ export class AIGenerationService {
       lower.includes("unknown parameter") ||
       lower.includes("unsupported parameter") ||
       lower.includes("unrecognized parameter") ||
+      lower.includes("unrecognized request argument") ||
+      lower.includes("unrecognized argument") ||
       lower.includes("invalid parameter") ||
       lower.includes("not supported") ||
       lower.includes("extra input") ||
@@ -299,7 +377,7 @@ export class AIGenerationService {
     }
 
     if (url) {
-      const imageResponse = await this.fetchWithContext(url, undefined, `${provider} 图片下载`);
+      const imageResponse = await this.fetchWithContext(url, undefined, `${provider} 图片下载`, 120000);
       if (!imageResponse.ok) {
         throw new Error(`下载${provider}图片失败: HTTP ${imageResponse.status} ${imageResponse.statusText}`);
       }
@@ -314,12 +392,39 @@ export class AIGenerationService {
     return summary ? `响应内容: ${summary}` : "响应正文为空。";
   }
 
-  private async fetchWithContext(input: string, init: RequestInit | undefined, provider: string): Promise<Response> {
+  /** 统一请求入口：生成/下载等耗时请求带明确超时，超时后给出可读错误 */
+  private async fetchWithContext(
+    input: string,
+    init: RequestInit | undefined,
+    provider: string,
+    timeoutMs = 300000
+  ): Promise<Response> {
     try {
-      return await fetch(input, init);
+      const mergedInit: RequestInit = { ...init };
+      if (!mergedInit.signal) {
+        mergedInit.signal = AbortSignal.timeout(timeoutMs);
+      }
+      return await fetch(input, mergedInit);
     } catch (error) {
-      throw new Error(`${provider} 请求失败: ${this.describeFetchError(error)}; URL: ${input}`);
+      const detail = this.describeFetchError(error);
+      const abortedBySignal = this.isAbortTimeout(error);
+      throw new Error(
+        `${provider} 请求失败: ${detail}${abortedBySignal ? `（等待 ${Math.round(timeoutMs / 1000)} 秒无响应，已中止）` : ""}; URL: ${input}`
+      );
     }
+  }
+
+  private isAbortTimeout(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+    const cause = error.cause as { name?: string } | undefined;
+    return (
+      error.name === "TimeoutError" ||
+      error.name === "AbortError" ||
+      (cause?.name ?? "").includes("Timeout") ||
+      (cause?.name ?? "").includes("Abort")
+    );
   }
 
   private describeFetchError(error: unknown): string {
@@ -328,7 +433,19 @@ export class AIGenerationService {
     }
 
     const cause = error.cause as { name?: string; message?: string; code?: string } | undefined;
-    const details = [error.message];
+    const low = error.message.toLowerCase();
+    const isTimeout =
+      error.name === "TimeoutError" ||
+      error.name === "AbortError" ||
+      (cause?.name ?? "").includes("Timeout") ||
+      (cause?.name ?? "").includes("Abort") ||
+      low.includes("aborted") ||
+      low.includes("timed out") ||
+      low.includes("timeout");
+
+    const details: string[] = isTimeout
+      ? ["网络请求超时或已中止（服务器未在限时内响应）", error.message]
+      : [error.message];
     if (cause?.code) {
       details.push(`code=${cause.code}`);
     }
@@ -403,6 +520,38 @@ export class AIGenerationService {
     } catch (error) {
       throw error instanceof Error ? error : new Error(String(error));
     }
+  }
+
+  /**
+   * 解析图片生成端点，兼容两种填写方式：
+   * 1) OpenAI 兼容 Base URL（如 https://ai.gitee.com/v1）→ 自动补全 /images/generations
+   *    （带参考图时为 /images/edits），与「拉取模型」对地址的 Base URL 语义保持一致；
+   * 2) 完整图片接口地址（路径含 /images 段）→ 原样使用（历史填写方式，向后兼容）；
+   * 3) 其它自定义路径（如 /txt2img）→ 视为完整接口地址，原样使用。
+   */
+  private resolveImageEndpoint(input: string, useReference: boolean): string {
+    const raw = input.trim();
+    let url: URL;
+    try {
+      url = new URL(raw);
+    } catch {
+      return raw;
+    }
+
+    const path = url.pathname.replace(/\/+$/, "").toLowerCase();
+    const isExplicitImagePath = path.endsWith("/images") || path.includes("/images/");
+    if (isExplicitImagePath) {
+      return raw;
+    }
+
+    const lastSegment = path.slice(path.lastIndexOf("/") + 1);
+    const isVersionRoot = path === "" || lastSegment === "v1" || lastSegment === "v2" || lastSegment === "api";
+    if (!isVersionRoot) {
+      return raw;
+    }
+
+    const root = this.resolveApiRoot(raw);
+    return `${root}${useReference ? "/images/edits" : "/images/generations"}`;
   }
 
   private resolveApiRoot(input: string): string {

@@ -53,11 +53,15 @@ const gameTypeOptions: SelectOption[] = [
   "其他"
 ];
 const stylePresets: Array<{ value: string; label: string; text: string }> = [
-  { value: "pixel", label: "generate.style.pixel", text: "像素画风（pixel art）：边缘清晰，轮廓干净，色板克制，无模糊渐变" },
-  { value: "chibi", label: "generate.style.chibi", text: "Q版画风：大头小身比例，圆润可爱，线条简洁明快" },
-  { value: "cartoon", label: "generate.style.cartoon", text: "卡通画风：明快色彩，清晰描边，扁平干净的卡通渲染" },
-  { value: "retro16", label: "generate.style.retro16", text: "16位复古游戏美术：细腻渐变与抖动阴影，清晰轮廓，像素颗粒感" },
-  { value: "realistic", label: "generate.style.realistic", text: "写实画风：厚涂质感，光影自然，注重体积与细节" }
+  { value: "pixel", label: "generate.style.pixel", text: "Pixel art: crisp hard pixel edges, clean readable silhouette, restrained color palette, no blur, no soft gradients." },
+  { value: "chibi", label: "generate.style.chibi", text: "Chibi art: big head with small body, rounded and cute shapes, clean simple lines, soft color blocking." },
+  { value: "cartoon", label: "generate.style.cartoon", text: "Cartoon style: bright flat colors, bold clean outlines, simple readable shapes, flat cel-like shading." },
+  { value: "anime", label: "generate.style.anime", text: "Japanese anime cel style: clean cel shading, saturated colors, neat lineart, expressive stylized faces." },
+  { value: "retro16", label: "generate.style.retro16", text: "16-bit retro game art: dithered shading, subtle gradients, clear outlines, visible chunky pixels, vibrant palette." },
+  { value: "flat", label: "generate.style.flat", text: "Flat vector design: solid color areas, minimal clean shapes, no gradients, no textures, no outlines." },
+  { value: "lowpoly", label: "generate.style.lowpoly", text: "Low-poly style: faceted geometric surfaces, flat-shaded facets, stylized lighting, crisp silhouettes." },
+  { value: "ink", label: "generate.style.ink", text: "Chinese ink wash (shui-mo) style: expressive brush strokes, ink gradation, soft paper texture, elegant negative space." },
+  { value: "realistic", label: "generate.style.realistic", text: "Realistic painted game concept art: rich painterly texture, natural lighting and material shading, strong volume and fine detail, clearly a hand-painted illustration rather than a photograph." }
 ];
 const styleCustomValue = "custom";
 const stylePresetOptions: SelectOption[] = stylePresets.map((preset) => ({
@@ -70,8 +74,17 @@ const qualityOptions: SelectOption[] = [
   { value: "high", label: "quality.high" }
 ];
 const defaultQuality: GenerationQuality = "low";
-/* 画布尺寸：下拉预设，选「自定义」时才手填 */
-const sizeOptions: SelectOption[] = ["512x512", "1024x1024", "1024x1536", "1536x1024"];
+/* 素材数量：固定档位，避免任意大数字导致网格过密或超出模型画布 */
+const countOptions: number[] = [1, 2, 3, 4, 6, 8, 9, 12, 16];
+/* 画布尺寸：下拉预设，选「自定义」时才手填宽高；选项文案含常见用途备注 */
+const sizeOptions: SelectOption[] = [
+  { value: "512x512", label: "sizePreset.s512" },
+  { value: "1024x1024", label: "sizePreset.s1024" },
+  { value: "1024x1536", label: "sizePreset.s1024x1536" },
+  { value: "1536x1024", label: "sizePreset.s1536x1024" },
+  { value: "1024x1792", label: "sizePreset.s1024x1792" },
+  { value: "1792x1024", label: "sizePreset.s1792x1024" }
+];
 const sizeCustomValue = "custom";
 const sizeSelectOptions: SelectOption[] = [...sizeOptions, { value: sizeCustomValue, label: "generate.sizeCustom" }];
 const referenceRoles: Array<{ value: ReferenceImageRole; label: string }> = [
@@ -87,13 +100,14 @@ const referenceStrengthOptions: Array<{ value: ReferenceStrength; label: string 
 ];
 const referenceStrengthLabels = Object.fromEntries(referenceStrengthOptions.map((option) => [option.value, option.label])) as Record<ReferenceStrength, string>;
 const assetTypes: Array<{ value: AssetType; label: string }> = [
-  { value: "icon", label: "assetType.icon" },
-  { value: "item", label: "assetType.item" },
   { value: "character", label: "assetType.character" },
   { value: "enemy", label: "assetType.enemy" },
+  { value: "item", label: "assetType.item" },
+  { value: "icon", label: "assetType.icon" },
   { value: "ui", label: "assetType.ui" },
+  { value: "effect", label: "assetType.effect" },
   { value: "background", label: "assetType.background" },
-  { value: "effect", label: "assetType.effect" }
+  { value: "other", label: "assetType.other" }
 ];
 
 const objectDetailTemplates: Record<AssetType, DetailTemplate[]> = {
@@ -131,6 +145,11 @@ const objectDetailTemplates: Record<AssetType, DetailTemplate[]> = {
     { id: "effect-impact", name: "命中爆发", prompt: "短促命中爆发，中心点清晰，径向粒子，透明背景", meta: "特效 · 打击" },
     { id: "effect-burst", name: "能量爆发", prompt: "能量流向一致、形状简洁的单体爆发形态", meta: "特效 · 能量" },
     { id: "effect-magic", name: "魔法光效", prompt: "奥术发光粒子，法术核心可读，外层柔和辉光", meta: "特效 · 魔法" }
+  ],
+  other: [
+    { id: "other-scene", name: "氛围场景", prompt: "完整的场景或插画画面，空间层次与氛围清晰，主体与背景分明", meta: "插画 · 场景" },
+    { id: "other-poster", name: "主视觉", prompt: "海报式单幅构图，视觉焦点明确，画面干净，有冲击力", meta: "插画 · 主视觉" },
+    { id: "other-charart", name: "完整立绘", prompt: "人物全身完整立绘，姿态自然，细节充分，画面自成一幅作品", meta: "插画 · 立绘" }
   ]
 };
 
@@ -484,7 +503,8 @@ function GeneratePage(props: {
   const [referenceImages, setReferenceImages] = useState<ReferenceDraft[]>([]);
   const [referenceStrength, setReferenceStrength] = useState<ReferenceStrength>("medium");
   const [sizePreset, setSizePreset] = useState(defaultPresets.size);
-  const [customSize, setCustomSize] = useState("");
+  const [customSizeW, setCustomSizeW] = useState(1024);
+  const [customSizeH, setCustomSizeH] = useState(1024);
   const [count, setCount] = useState(defaultPresets.count);
   const [cellNamesText, setCellNamesText] = useState("");
   const [quality, setQuality] = useState<GenerationQuality>(defaultQuality);
@@ -507,6 +527,8 @@ function GeneratePage(props: {
       ? customStyle.trim()
       : stylePresets.find((preset) => preset.value === stylePreset)?.text ?? "";
   const styleReady = stylePreset !== styleCustomValue || customStyle.trim().length > 0;
+  // 「其它」= 单张整图输出（插画/单幅作品），数量锁定 1
+  const isSingleShot = assetType === "other";
   const styleOptions = useMemo<SelectOption[]>(
     () => [...stylePresetOptions, { value: styleCustomValue, label: "generate.style.custom" }],
     []
@@ -546,6 +568,8 @@ function GeneratePage(props: {
     }
     setSliceCols(draft.cols);
     setSliceRows(draft.rows);
+    // 单张输出时默认不裁安全边距，避免整幅画被削边
+    setSliceShrink(draft.count === 1 ? 0 : 8);
     let alive = true;
     window.topspeedBuilder.readImageDataUrl(props.project.path, draft.gridImagePath).then((result) => {
       if (alive && result.ok && result.data) setGridDataUrl(result.data);
@@ -562,6 +586,11 @@ function GeneratePage(props: {
     setDetailPrompt("");
     setSelectedDetailTemplateIds([]);
     setSizePreset(preset.size);
+    const presetMatch = preset.size.match(/^(\d+)x(\d+)$/);
+    if (presetMatch) {
+      setCustomSizeW(Number(presetMatch[1]));
+      setCustomSizeH(Number(presetMatch[2]));
+    }
     setCount(preset.count);
     setTransparentBackground(preset.transparentBackground);
   }
@@ -601,9 +630,9 @@ function GeneratePage(props: {
       detailPrompt,
       referenceImages: referenceImages.map(toReferenceInput),
       referenceStrength,
-      size: sizePreset === sizeCustomValue ? customSize.trim() || "1024x1024" : sizePreset,
-      count,
-      cellNames: splitLines(cellNamesText),
+      size: sizePreset === sizeCustomValue ? `${clampBoxSize(customSizeW)}x${clampBoxSize(customSizeH)}` : sizePreset,
+      count: isSingleShot ? 1 : count,
+      cellNames: isSingleShot ? [] : splitLines(cellNamesText),
       quality,
       style: selectedStyleText,
       transparentBackground,
@@ -682,9 +711,35 @@ function GeneratePage(props: {
             label={t("generate.size")}
             value={sizePreset}
             options={sizeSelectOptions}
-            onChange={(next) => setSizePreset(String(next))}
+            onChange={(next) => {
+              const value = String(next);
+              setSizePreset(value);
+              // 记住预设数值：切到「自定义」时作为宽高初值
+              if (value !== sizeCustomValue) {
+                const match = value.match(/^(\d+)x(\d+)$/);
+                if (match) {
+                  setCustomSizeW(Number(match[1]));
+                  setCustomSizeH(Number(match[2]));
+                }
+              }
+            }}
           />
-          <NumberInput label={t("generate.count")} value={count} min={1} max={36} onChange={setCount} />
+          <label className="field">
+            <span>{t("generate.count")}</span>
+            {isSingleShot ? (
+              <select value={1} disabled aria-label={t("generate.count")}>
+                <option value={1}>1</option>
+              </select>
+            ) : (
+              <select value={count} aria-label={t("generate.count")} onChange={(event) => setCount(Number(event.target.value))}>
+                {countOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            )}
+          </label>
           <SelectInput
             label={t("generate.quality")}
             value={quality}
@@ -693,8 +748,12 @@ function GeneratePage(props: {
           />
         </div>
         {sizePreset === sizeCustomValue && (
-          <TextInput label={t("generate.sizeCustom")} value={customSize} onChange={setCustomSize} />
+          <div className="formGrid">
+            <NumberInput label={t("generate.sizeWidth")} value={customSizeW} min={256} max={2048} onChange={setCustomSizeW} />
+            <NumberInput label={t("generate.sizeHeight")} value={customSizeH} min={256} max={2048} onChange={setCustomSizeH} />
+          </div>
         )}
+        {isSingleShot && <div className="inlineNote compactNote">{t("generate.otherHint")}</div>}
         <TextArea label={t("generate.desc")} value={description} onChange={setDescription} />
 
         <ReferenceImagePanel
@@ -739,7 +798,7 @@ function GeneratePage(props: {
           </div>
         </div>
         <TextArea label={t("generate.detailPrompt")} value={detailPrompt} onChange={handleDetailPromptChange} />
-        <TextArea label={t("generate.cellNames")} value={cellNamesText} onChange={setCellNamesText} />
+        {!isSingleShot && <TextArea label={t("generate.cellNames")} value={cellNamesText} onChange={setCellNamesText} />}
       </section>
 
       <section className="panel">
@@ -1077,7 +1136,12 @@ function SettingsPage(props: {
         {t("settings.imageEndpointHint")}
       </div>
       <div className="formGrid apiGrid">
-        <TextInput label={t("settings.apiBaseUrl")} value={draft.apiBaseUrl} onChange={(apiBaseUrl) => setDraft({ ...draft, apiBaseUrl })} />
+        <TextInput
+          label={t("settings.apiBaseUrl")}
+          value={draft.apiBaseUrl}
+          placeholder={t("settings.apiBaseUrlHint")}
+          onChange={(apiBaseUrl) => setDraft({ ...draft, apiBaseUrl })}
+        />
         <TextInput label={t("settings.apiKey")} value={draft.apiKey} type="password" onChange={(apiKey) => setDraft({ ...draft, apiKey })} />
         <button
           className="ghostButton"
@@ -1277,6 +1341,7 @@ function TextInput(props: {
   value: string;
   type?: string;
   disabled?: boolean;
+  placeholder?: string;
   onChange: (value: string) => void;
 }): JSX.Element {
   return (
@@ -1286,6 +1351,7 @@ function TextInput(props: {
         type={props.type ?? "text"}
         value={props.value}
         disabled={props.disabled}
+        placeholder={props.placeholder}
         onChange={(event) => props.onChange(event.target.value)}
       />
     </label>
@@ -1383,7 +1449,15 @@ function presetsFor(type: AssetType): { name: string; description: string; size:
       return { name: "背景", description: "横版卷轴背景层，无角色", size: "1536x1024", count: 3, transparentBackground: false };
     case "effect":
       return { name: "特效", description: "游戏特效单体形态，风格统一", size: "1024x1024", count: 6, transparentBackground: true };
+    case "other":
+      return { name: "其它", description: "一整幅完整插画作品，画面内容见描述", size: "1024x1024", count: 1, transparentBackground: false };
   }
+}
+
+/** 自定义尺寸：非法或留空回退 1024，限制在 256–2048 之间 */
+function clampBoxSize(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 1024;
+  return Math.min(2048, Math.max(256, Math.round(value)));
 }
 
 function splitLines(value: string): string[] {

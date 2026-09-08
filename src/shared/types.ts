@@ -5,7 +5,8 @@ export type AssetType =
   | "item"
   | "ui"
   | "background"
-  | "effect";
+  | "effect"
+  | "other";
 
 export type GenerationQuality = "low" | "medium" | "high";
 export type ReferenceImageRole = "subject" | "style" | "composition" | "palette";

@@ -37,7 +37,7 @@ export class GenerationService {
   /** 第一阶段：让 AI 生成“一张含 count 个素材的网格大图”草稿，不写库 */
   async generateGrid(input: GenerateAssetInput): Promise<GridDraft> {
     const project = await this.projectService.openProjectPath(input.projectPath);
-    const count = this.normalizeCount(input.count);
+    const count = this.effectiveCount(input);
     const logs: string[] = [];
     const runId = randomUUID();
     const grid = this.autoGrid(count);
@@ -91,7 +91,7 @@ export class GenerationService {
 
     const cols = this.clampInt(options.cols || draft.cols, 1, 24);
     const rows = this.clampInt(options.rows || draft.rows, 1, 24);
-    const count = this.normalizeCount(input.count);
+    const count = this.effectiveCount(input);
     const sliceCount = Math.min(count, cols * rows);
     const shrinkPercent = this.clampInt(options.shrinkPercent ?? 8, 0, 30);
     const shiftX = this.clampInt(options.shiftX ?? 0, -1024, 1024);
@@ -234,28 +234,54 @@ export class GenerationService {
     rows: number,
     count: number
   ): string {
-    const label = this.assetTypeLabel(input.assetType);
+    const nouns = this.assetTypeNouns(input.assetType);
+    // 单张模式：整张画布就是一件独立作品，不按网格排列多个素材
+    const singleShot = count === 1;
+    const isIllustration = input.assetType === "other";
     const names = (input.cellNames || []).map((name) => name.trim()).filter(Boolean);
     const namesLine =
-      names.length > 0
-        ? `网格内容按行优先顺序（第 1 行从左到右、然后第 2 行……）分别为：${names.join("、")}。`
+      names.length > 0 && !singleShot
+        ? `Cell contents in row-major order (row 1 from left to right, then row 2, ...): ${names.join(", ")}.`
         : "";
-    const background = input.transparentBackground
-      ? "使用干净的单色背景（便于后续抠图），不要地面阴影、不要文字、不要水印。"
-      : "使用干净的单色游戏素材背景，不要地面阴影、不要文字、不要水印。";
+    const description = (input.description || "").trim();
+    const descriptionLine = description ? `Overall content description: ${description}.` : "";
+    const header = singleShot
+      ? isIllustration
+        ? "Generate ONE full-canvas 2D game illustration: the entire canvas is one finished piece of artwork."
+        : `Generate ONE 2D game ${nouns.singular}: the whole canvas holds a single complete ${nouns.singular}, centered with a small safe margin.`
+      : `Generate one large 2D game art sheet containing ${count} independent ${nouns.plural}, evenly arranged into a ${cols} x ${rows} grid (filled row by row from left to right).`;
+    const layoutRule = singleShot
+      ? "Composition rule: keep the described content as the focus of the whole image, with a balanced, complete composition and a small safe margin at the borders; do NOT draw grid lines and do NOT split the canvas into multiple separate assets."
+      : "Grid rules: exactly one complete subject per cell, centered and well separated from its cell borders; subjects must not overlap or touch each other; do NOT draw grid lines or borders; do NOT repeat or duplicate any subject; keep the art style, color palette and lighting consistent across the whole image.";
 
     return [
-      `生成一张二维游戏美术大图，共 ${count} 个独立${label}，均匀排列成 ${cols} 列 × ${rows} 行。`,
+      header,
       namesLine,
-      `整体内容描述：${input.description || "无"}。`,
+      descriptionLine,
       this.buildStylePrompt(project, input),
-      background,
-      `最终画布尺寸：${input.size || "1024x1024"}。`,
-      "网格硬约束：每个格子内只放一个完整主体并居中、保留安全边距；不同主体互不重叠、互不接触；不要画网格分割线或边框；不要重复绘制同一个素材；整张图内美术风格、色板与光影必须保持一致。",
+      this.buildBackgroundRule(input, singleShot),
+      layoutRule,
+      `Final canvas size: ${input.size || "1024x1024"}.`,
       this.buildReferenceGuidance(input)
     ]
       .filter(Boolean)
       .join("\n");
+  }
+
+  /**
+   * 背景规则：
+   * - 透明背景模式 → 强制干净纯色背景，方便后续抠图；
+   * - 单张整图（插画类）且非透明 → 保留内容所需环境/场景，不再强制纯色；
+   * - 多素材网格且非透明 → 仍需干净纯色底，保证每个格子可读。
+   */
+  private buildBackgroundRule(input: GenerateAssetInput, singleShot: boolean): string {
+    if (input.transparentBackground) {
+      return "Background: use one clean, uniform solid-color background that is easy to remove later; no ground shadows, no text, no watermark.";
+    }
+    if (singleShot) {
+      return "Background: keep the natural environment or scenery that fits the described content; no text and no watermark.";
+    }
+    return "Background: use one clean, uniform solid-color background for every cell; no ground shadows, no text, no watermark.";
   }
 
   private buildStylePrompt(project: Project, input: GenerateAssetInput): string {
@@ -265,9 +291,10 @@ export class GenerationService {
     const styleName = batchStyle || project.style.trim();
     const styleDescription = batchStyle ? "" : project.styleDescription.trim();
     return [
-      styleName ? `主要美术风格：${styleName}` : "",
-      styleDescription && styleDescription !== styleName ? `风格说明：${styleDescription}` : "",
-      detailPrompt ? `对象细节：${detailPrompt}` : ""
+      styleName ? `Art style: ${styleName}` : "",
+      styleDescription && styleDescription !== styleName ? `Style notes: ${styleDescription}` : "",
+      // 对象细节模板内容保留原始语言（中文），仅用英文句引导
+      detailPrompt ? `Additional subject detail notes: ${detailPrompt}` : ""
     ]
       .filter(Boolean)
       .join("\n");
@@ -277,23 +304,26 @@ export class GenerationService {
     if (!input.referenceImages?.length) {
       return "";
     }
-    const roleLabels: Record<ReferenceImageRole, string> = {
-      subject: "参考图主体是整套素材的统一身份模板",
-      style: "参考图定义了整套素材的视觉风格",
-      composition: "参考图定义了整套素材的构图方式",
-      palette: "参考图定义了整套素材的色板"
+    const roleMeaning: Record<ReferenceImageRole, string> = {
+      subject: "defines the identity and appearance of the main subject(s)",
+      style: "defines the overall visual style",
+      composition: "defines the layout and composition direction",
+      palette: "defines the color palette"
     };
-    const strengthLabels: Record<ReferenceStrength, string> = {
-      low: "宽松参考输入图，主要听从文字提示。",
-      medium: "在文字提示与参考图之间保持平衡。",
-      high: "尽量高保真保留参考图细节与风格。"
+    const strengthMeaning: Record<ReferenceStrength, string> = {
+      low: "Treat the reference images loosely and follow the text prompt first.",
+      medium: "Balance the text prompt and the reference images.",
+      high: "Stay as faithful as possible to the reference images' details and style."
     };
     const roles = input.referenceImages
-      .map((reference, index) => `第 ${index + 1} 张参考图（${this.referenceRoleLabel(reference.role)}）：${roleLabels[reference.role]}。`)
+      .map(
+        (reference, index) =>
+          `Reference image ${index + 1} (${this.referenceRoleLabel(reference.role)}): ${roleMeaning[reference.role]}.`
+      )
       .join(" ");
     return [
-      "使用随请求提供的参考图来统一网格内所有素材：",
-      strengthLabels[input.referenceStrength],
+      "Use the attached reference images to unify the whole output:",
+      strengthMeaning[input.referenceStrength],
       roles
     ].join(" ");
   }
@@ -409,6 +439,11 @@ export class GenerationService {
     return this.clampInt(Math.round(Number(value) || 1), 1, MAX_CELLS);
   }
 
+  /** 单张/插画类型固定输出 1 张，其余类型使用表单数量 */
+  private effectiveCount(input: GenerateAssetInput): number {
+    return input.assetType === "other" ? 1 : this.normalizeCount(input.count);
+  }
+
   private clampInt(value: number, min: number, max: number): number {
     if (!Number.isFinite(value)) return min;
     return Math.min(max, Math.max(min, Math.round(value)));
@@ -430,6 +465,17 @@ export class GenerationService {
   private isTransientImageError(error: unknown): boolean {
     const message = error instanceof Error ? error.message : String(error);
     const lower = message.toLowerCase();
+    // 客户端等待超时（请求发出后长时间无响应被本地中止）：服务端只是慢，重试 4 次会额外等 20+ 分钟，
+    // 对用户毫无价值 → 不视为可重试错误，直接上抛清晰提示。
+    const isClientWaitTimeout =
+      lower.includes("超时或已中止") ||
+      lower.includes("aborted due to timeout") ||
+      lower.includes("headers timeout") ||
+      lower.includes("body timeout") ||
+      lower.includes("等待 300 秒无响应");
+    if (isClientWaitTimeout) {
+      return false;
+    }
     return (
       lower.includes("fetch failed") ||
       lower.includes("network") ||
@@ -461,23 +507,24 @@ export class GenerationService {
 
   private referenceRoleLabel(value: ReferenceImageRole): string {
     const labels: Record<ReferenceImageRole, string> = {
-      subject: "主体参考",
-      style: "风格参考",
-      composition: "构图参考",
-      palette: "色板参考"
+      subject: "subject reference",
+      style: "style reference",
+      composition: "composition reference",
+      palette: "palette reference"
     };
     return labels[value];
   }
 
-  private assetTypeLabel(value: AssetType): string {
-    const labels: Record<AssetType, string> = {
-      character: "角色",
-      enemy: "怪物",
-      icon: "图标",
-      item: "道具",
-      ui: "界面元素",
-      background: "背景",
-      effect: "特效"
+  private assetTypeNouns(value: AssetType): { singular: string; plural: string } {
+    const labels: Record<AssetType, { singular: string; plural: string }> = {
+      character: { singular: "character", plural: "characters" },
+      enemy: { singular: "enemy", plural: "enemies" },
+      icon: { singular: "icon", plural: "icons" },
+      item: { singular: "item", plural: "items" },
+      ui: { singular: "UI element", plural: "UI elements" },
+      background: { singular: "background", plural: "backgrounds" },
+      effect: { singular: "effect", plural: "effects" },
+      other: { singular: "illustration", plural: "illustrations" }
     };
     return labels[value];
   }

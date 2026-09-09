@@ -54,12 +54,21 @@ export class GenerationService {
       hasReference ? "preserve-style" : undefined
     );
 
+    // 透明背景：模型若未真输出透明通道（宽松网关忽略 background 参数时产物为纯色底），
+    // 在草稿落盘前就本地抠掉均匀底色，保证预览与切分结果都是透明 PNG。
+    const gridBuffer = input.transparentBackground
+      ? await this.imageService.removeBackground(buffer)
+      : buffer;
+
     const gridPath = path.join(project.path, "generated", "raw", runId, "grid.png");
     await fs.ensureDir(path.dirname(gridPath));
-    await fs.writeFile(gridPath, buffer);
+    await fs.writeFile(gridPath, gridBuffer);
     logs.push(`保存网格大图: ${gridPath}`);
+    if (input.transparentBackground) {
+      logs.push("透明背景：已对网格大图执行背景移除，素材将输出为透明 PNG。");
+    }
 
-    const metadata = await sharp(buffer).metadata();
+    const metadata = await sharp(gridBuffer).metadata();
     const width = metadata.width ?? 1024;
     const height = metadata.height ?? 1024;
 

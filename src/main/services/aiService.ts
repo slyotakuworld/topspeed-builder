@@ -158,6 +158,9 @@ export class AIGenerationService {
     useReference: boolean
   ): Promise<Buffer> {
     if (useReference) {
+      // OpenAI /images/edits 只认标准字段：image / prompt / model / size / background / quality。
+      // 不再发送 editIntent / referenceStrength / referenceImages 等自定义字段——
+      // 严格网关（官方 OpenAI / new-api 中转）会在鉴权前先以 400 invalid arguments 拒绝它们。
       const buildReferenceForm = async (includeQuality: boolean): Promise<FormData> => {
         const form = new FormData();
         form.append("prompt", args.prompt);
@@ -167,23 +170,10 @@ export class AIGenerationService {
         if (args.transparentBackground) {
           form.append("background", "transparent");
         }
-        form.append("editIntent", args.editIntent ?? "");
-        form.append("referenceStrength", args.referenceStrength ?? "");
         // 生成质量为可选透传参数；服务端不支持时自动回退为不带 quality 的请求重试
         if (includeQuality && args.quality) {
           form.append("quality", args.quality);
         }
-        form.append(
-          "referenceImages",
-          JSON.stringify(
-            (args.referenceImages ?? []).map((reference) => ({
-              role: reference.role,
-              name: reference.name,
-              sourceAssetId: reference.sourceAssetId
-            }))
-          )
-        );
-
         for (const reference of args.referenceImages ?? []) {
           form.append("image", await this.fileToBlob(reference.filePath), path.basename(reference.filePath));
         }
@@ -516,7 +506,7 @@ export class AIGenerationService {
         throw new Error("接口返回了模型列表，但没有可识别的模型 ID（期望 OpenAI 兼容的 { data: [{ id }] } 结构）。");
       }
 
-      return this.pickImageModels(ids);
+      return this.dedupeSorted(ids);
     } catch (error) {
       throw error instanceof Error ? error : new Error(String(error));
     }
@@ -581,12 +571,9 @@ export class AIGenerationService {
     return `${url.origin}${path}`;
   }
 
-  private pickImageModels(ids: string[]): string[] {
-    const pattern =
-      /(image|img|dall-e|gpt-image|imagen|flux|stable|sd-|sd3|sdxl|recraft|ideogram|krea|midjourney|wan|sora|emova|kolors|qwen|glm|step|hunyuan|abab|minimax|doubao|spark|moonshot|grok|claude|chatgpt)/i;
-    const filtered = ids.filter((id) => pattern.test(id));
-    const result = filtered.length > 0 ? filtered : ids;
-    return [...new Set(result)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  /** 全量返回接口给定的模型，仅做去重 + 按名称排序，不做任何图片模型过滤 */
+  private dedupeSorted(ids: string[]): string[] {
+    return [...new Set(ids)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   }
 
 }

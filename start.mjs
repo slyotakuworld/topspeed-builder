@@ -92,16 +92,18 @@ function showMenu() {
   log('  4) 安装依赖并打包 Windows 安装包 (npm run dist:win)');
   log('  5) 退出');
   log(c('================================================', 'cyan'));
-  log('  提示：开发模式下会直接打开桌面应用窗口，无需打开浏览器。');
+  log('  提示：直接回车默认执行 1)；开发模式下会直接打开桌面应用窗口，无需打开浏览器。');
   log('');
 }
 
-async function ask(question) {
+async function ask(question, defaultValue = '') {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolve) => {
     rl.question(question, (ans) => {
       rl.close();
-      resolve(ans.trim());
+      const value = ans.trim();
+      // 直接回车（空输入）时使用默认选项，避免误报"无效选择"
+      resolve(value === '' ? defaultValue : value);
     });
   });
 }
@@ -134,7 +136,7 @@ async function main() {
   // 3. 启动菜单
   while (true) {
     showMenu();
-    const choice = await ask(c('请选择操作 [1-5]: ', 'cyan'));
+    const choice = await ask(c('请选择操作 [1-5]（直接回车默认 1）: ', 'cyan'), '1');
     log('');
     switch (choice) {
       case '1': {

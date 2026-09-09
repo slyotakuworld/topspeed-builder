@@ -343,17 +343,21 @@ function App(): JSX.Element {
             }}
           />
         )}
-        {page === "generate" && project && (
-          <GeneratePage
-            project={project}
-            settings={settings}
-            runTask={runTask}
-            queuedReference={queuedReference}
-            onQueuedReferenceConsumed={() => setQueuedReference(null)}
-            onCommitted={async () => {
-              await refreshProject(project.path);
-            }}
-          />
+        {project && (
+          <div className="pageWrap" hidden={page !== "generate"}>
+            {/* 常驻挂载：切换页面不销毁生成页状态；key=项目路径，切换项目时自动重置 */}
+            <GeneratePage
+              key={project.path}
+              project={project}
+              settings={settings}
+              runTask={runTask}
+              queuedReference={queuedReference}
+              onQueuedReferenceConsumed={() => setQueuedReference(null)}
+              onCommitted={async () => {
+                await refreshProject(project.path);
+              }}
+            />
+          </div>
         )}
         {page === "assets" && project && (
           <AssetsPage

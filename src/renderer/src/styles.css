@@ -64,6 +64,26 @@ body {
 button, input, select, textarea { font: inherit; }
 button { color: inherit; }
 
+/* 侧栏底部：构建时间戳，用于判断当前实例是否为最新构建 */
+.sidebarStamp {
+  margin-top: 4px;
+  padding: 3px 6px;
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  color: var(--cyan);
+  opacity: 0.85;
+  text-align: center;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 1px solid var(--steel);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  cursor: default;
+}
+
 /* === SHELL === */
 .shell {
   display: grid;
@@ -92,7 +112,7 @@ button { color: inherit; }
 .sidebar {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
   padding: 20px 16px;
   border-right: 2px solid var(--steel);
   background:
@@ -100,6 +120,7 @@ button { color: inherit; }
     linear-gradient(0deg, var(--amber-dim) 0%, transparent 50%),
     var(--pit);
   position: relative;
+  min-height: 0;
 }
 
 .sidebar::before {
@@ -244,6 +265,229 @@ button { color: inherit; }
 
 .projectDock span { display: none; }
 
+/* === SIDEBAR HISTORY RAIL === */
+.historyRail {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.historyRailHead {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.historyRailHead svg { color: var(--amber); flex-shrink: 0; }
+
+.historyRailHead small {
+  margin-left: auto;
+  padding: 0 7px;
+  border: 1px solid var(--steel);
+  border-radius: 999px;
+  font-size: 10px;
+  color: var(--dim);
+}
+
+.historyRailList {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  padding: 2px 2px 2px 0;
+}
+
+.historyRailEmpty {
+  margin: 0;
+  padding: 16px 8px;
+  border: 1px dashed var(--steel);
+  border-radius: 8px;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--dim);
+}
+
+.historyRailItem {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.historyRailHit {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border: 2px solid var(--steel);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.02), transparent),
+    var(--anvil);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.historyRailHit:hover {
+  border-color: var(--chrome);
+  background: rgba(255, 255, 255, 0.04);
+  transform: translateY(-1px);
+}
+
+/* 选中态：该历史记录的草稿正打开在素材生成页里（点历史恢复 / 新生成 / 丢弃自动切换） */
+.historyRailItem.selected .historyRailHit {
+  border-color: var(--cyan);
+  background:
+    linear-gradient(135deg, rgba(0, 212, 255, 0.12), transparent 55%),
+    var(--anvil);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 212, 255, 0.28),
+    0 0 12px rgba(0, 212, 255, 0.10);
+}
+
+.historyRailItem.selected .historyRailHit:hover {
+  background:
+    linear-gradient(135deg, rgba(0, 212, 255, 0.18), transparent 55%),
+    var(--anvil);
+  transform: none;
+}
+
+.historyRailItem.selected .historyRailThumb {
+  border-color: var(--cyan);
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.18);
+}
+
+.historyRailItem.selected .historyRailMeta strong {
+  color: #f2fbff;
+}
+
+.historyRailThumb {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--steel);
+  border-radius: 6px;
+  background:
+    repeating-conic-gradient(rgba(255, 255, 255, 0.05) 0% 25%, transparent 0% 50%) 0 0 / 14px 14px,
+    var(--pit);
+}
+
+.historyRailThumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.historyRailThumbPh {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  color: var(--dim);
+}
+
+.historyRailMeta {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+  align-content: center;
+}
+
+.historyRailMeta strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.historyRailMeta > small {
+  font-size: 10px;
+  color: var(--dim);
+}
+
+.historyRailMetaLine {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.historyRailMetaLine em {
+  font-style: normal;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.historyRailMetaLine small {
+  font-size: 10px;
+  color: var(--dim);
+}
+
+.railStatus {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.4);
+}
+
+.railStatus.draft { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+.railStatus.committed { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
+
+.historyRailDelete {
+  flex-shrink: 0;
+  align-self: center;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 160ms ease, color 160ms ease, background 160ms ease;
+}
+
+.historyRailItem:hover .historyRailDelete { opacity: 1; }
+
+.historyRailDelete:hover {
+  color: var(--magenta);
+  background: rgba(255, 45, 149, 0.14);
+}
+
+/* 已入库批次历史回看提示块（生成页草稿面板内） */
+.committedPreview {
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid var(--steel);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
 /* === WORKSPACE === */
 .workspace {
   display: flex;
@@ -315,6 +559,48 @@ button { color: inherit; }
 .ready {
   border-color: rgba(0, 212, 255, 0.25);
   color: var(--cyan);
+}
+
+/* === GLOBAL BUSY OVERLAY === */
+.busyOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: grid;
+  place-items: center;
+  background: rgba(5, 8, 11, 0.62);
+  backdrop-filter: blur(3px);
+  cursor: progress;
+}
+
+.busyCard {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  max-width: 80vw;
+  padding: 26px 48px;
+  border: 2px solid rgba(255, 140, 0, 0.55);
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg, rgba(255, 140, 0, 0.08), transparent),
+    var(--forge);
+  box-shadow: 0 0 46px var(--amber-dim), inset 0 0 30px rgba(0, 0, 0, 0.4);
+}
+
+.busyCard svg { color: var(--amber); filter: drop-shadow(0 0 8px var(--amber)); }
+
+.busyCard strong {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  text-align: center;
+}
+
+.busyCard span {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
 }
 
 .notice {
@@ -543,8 +829,99 @@ button { color: inherit; }
 }
 
 .pageGrid.generation {
-  grid-template-columns: minmax(520px, 0.75fr) minmax(380px, 0.6fr);
+  /* AI 生成参数（左）与生成结果（右）两块互不关联地独立滚动 */
+  grid-template-columns: minmax(430px, 0.95fr) minmax(400px, 1fr);
+  grid-auto-rows: minmax(0, 1fr);
+  overflow: hidden;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 24px 28px 28px;
 }
+
+.pageGrid.generation > .panel {
+  overflow-y: auto;
+  min-height: 0;
+  overscroll-behavior: contain;
+}
+
+/* 右栏：切分设置/确认切分操作区，视觉上与下方网格大图区分开 */
+.pageGrid.generation .slicePanel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+  border: 2px solid var(--steel);
+  border-radius: 10px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.02), transparent),
+    var(--anvil);
+}
+
+/* 右栏大图草稿：放操作区下方，占满剩余宽度 */
+.pageGrid.generation .gridStage {
+  align-self: center;
+  max-width: 100%;
+}
+
+/* 生成页左栏：尺寸下拉整行独占（完整展示各预设用途说明），数量/质量弱化为小型控件 */
+.field.sizeSelect select {
+  min-height: 44px;
+  font-size: 14px;
+  padding: 10px 12px;
+}
+.field.slim { gap: 4px; }
+.field.slim > span { font-size: 9px; letter-spacing: 0.09em; }
+.field.slim input,
+.field.slim select {
+  min-height: 30px;
+  padding: 5px 9px;
+  font-size: 12.5px;
+  border-radius: 7px;
+}
+.formGrid.gapSm { gap: 10px; }
+
+/* 生成结果右栏：预览图置顶 → 确认切分操作行 → 出图后参数（紧凑）→ 产出批次信息置底 */
+.pageGrid.generation .resultPanel { gap: 12px; }
+.pageGrid.generation .sliceActions { margin: 0; }
+.pageGrid.generation .slicePanel { gap: 10px; padding: 12px 14px; }
+.pageGrid.generation .slicePanel .formGrid { gap: 10px; }
+.pageGrid.generation .slicePanel .field { gap: 4px; }
+.pageGrid.generation .slicePanel .field > span {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+.pageGrid.generation .slicePanel .field input,
+.pageGrid.generation .slicePanel .field select {
+  min-height: 30px;
+  padding: 5px 10px;
+  font-size: 12.5px;
+  border-radius: 7px;
+}
+.pageGrid.generation .slicePanel .deckSwitch {
+  min-height: 30px;
+  border-radius: 7px;
+}
+.pageGrid.generation .slicePanel .inlineNote { margin: 0; }
+
+/* 智能对齐 / 列 / 行 参数行：控件按内容宽度紧凑排布，不整行撑满 */
+.pageGrid.generation .sliceToolsRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+.pageGrid.generation .sliceToolsRow .field {
+  flex: 0 1 118px;
+  min-width: 96px;
+}
+.pageGrid.generation .sliceToolsRow .field.autoToggle {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.pageGrid.generation .sliceToolsRow .field.autoToggle .deckSwitch {
+  min-width: 84px;
+}
+.pageGrid.generation .resultPanel .genHistoryBlock { margin: 0; }
 
 .panel {
   display: flex;
@@ -623,6 +1000,12 @@ button { color: inherit; }
 
 .formGrid.three {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* 单控件整行的紧凑版：智能切分开关等 */
+.formGrid.compact {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
 }
 
 /* 素材生成页顶部：类型 / 风格 / 透明背景 / 自动裁边 一行排布 */
@@ -1466,7 +1849,7 @@ button { color: inherit; }
 
 .gridStage .gridLine.vertical {
   top: 0;
-  bottom: 0;
+  height: 100%;
   width: 1px;
 }
 
@@ -1474,6 +1857,17 @@ button { color: inherit; }
   left: 0;
   right: 0;
   height: 1px;
+}
+
+/* 内容感知切分：绿色真实边界框 */
+.gridStage .autoBox {
+  position: absolute;
+  border: 2px solid rgba(80, 240, 120, 0.95);
+  border-radius: 3px;
+  box-shadow: 0 0 6px rgba(80, 240, 120, 0.35);
+  background: rgba(80, 240, 120, 0.08);
+  pointer-events: none;
+  box-sizing: border-box;
 }
 
 /* 素材卡内多图缩略导航 */
@@ -1814,6 +2208,9 @@ button { color: inherit; }
 
 @media (max-width: 1180px) {
   .pageGrid.two, .pageGrid.generation { grid-template-columns: 1fr; }
+  /* 窄窗口退回整页滚动：两栏纵向堆叠，不再各自独立滚动 */
+  .pageGrid.generation { grid-auto-rows: auto; overflow-y: auto; }
+  .pageGrid.generation > .panel { overflow: visible; }
   .formGrid.three { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .detailTemplateGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
@@ -1822,4 +2219,263 @@ button { color: inherit; }
   .detailTemplateGrid { grid-template-columns: 1fr; }
   .detailTemplateHeader { align-items: flex-start; flex-direction: column; }
   .referenceHeader, .maskPanel { align-items: flex-start; flex-direction: column; }
+}
+
+/* === 生成历史 === */
+/* 历史面板横跨生成页两列布局 */
+.panel.genHistoryFull {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.genHistoryList {
+  display: grid;
+  gap: 12px;
+  max-height: 440px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.genHistoryCard {
+  border: 2px solid var(--steel);
+  border-radius: 10px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.02), transparent),
+    var(--anvil);
+  transition: border-color 180ms ease;
+}
+
+.genHistoryCard:hover { border-color: var(--chrome); }
+
+.genHistoryRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+}
+
+.genHistoryMain { min-width: 0; flex: 1 1 auto; }
+
+.genHistoryHeading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.genHistoryHeading strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.genHistoryType {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border: 1px solid var(--chrome);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.genHistoryMetaLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.genHistoryStyle {
+  margin-top: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 720px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.genHistoryActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.genHistoryActions button { white-space: nowrap; }
+
+.genHistoryActions .dangerGhost {
+  border-color: rgba(255, 45, 149, 0.28);
+  color: var(--magenta);
+}
+
+.genHistoryActions .dangerGhost:hover {
+  border-color: rgba(255, 45, 149, 0.5);
+  background: rgba(255, 45, 149, 0.12);
+}
+
+.statusChip {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  border: 1px solid transparent;
+}
+
+.statusChip.draft {
+  border-color: rgba(255, 140, 0, 0.35);
+  background: var(--amber-dim);
+  color: var(--amber);
+}
+
+.statusChip.committed {
+  border-color: rgba(0, 212, 255, 0.35);
+  background: var(--cyan-dim);
+  color: var(--cyan);
+}
+
+.genHistoryDetail {
+  display: grid;
+  grid-template-columns: minmax(200px, 320px) 1fr;
+  gap: 16px;
+  padding: 14px;
+  border-top: 1px solid var(--steel);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.genHistoryImg {
+  display: grid;
+  place-items: center;
+  min-height: 160px;
+  align-self: start;
+  overflow: hidden;
+  border: 1px solid var(--steel);
+  border-radius: 8px;
+  background:
+    repeating-conic-gradient(rgba(255, 255, 255, 0.05) 0% 25%, transparent 0% 50%) 0 0 / 20px 20px,
+    var(--pit);
+}
+
+.genHistoryImg img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.genHistoryImgEmpty {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 24px 16px;
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.genHistoryInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.kvGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 4px 18px;
+  margin: 0;
+}
+
+.kvGrid .kv { min-width: 0; }
+
+.kvGrid dt {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.kvGrid dd {
+  margin: 2px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.genHistoryBlock strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.genHistoryBlock p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.genHistoryPrompt {
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  max-height: 180px;
+  border: 1px solid var(--steel);
+  border-radius: 6px;
+  background: var(--pit);
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.genHistoryFilesHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.genHistoryFilesHead .miniClearButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.genHistoryFiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.genHistoryFiles code {
+  padding: 2px 8px;
+  border: 1px solid var(--steel);
+  border-radius: 5px;
+  background: var(--forge);
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+@media (max-width: 900px) {
+  .genHistoryDetail { grid-template-columns: 1fr; }
+  .genHistoryImg img { width: 100%; }
 }

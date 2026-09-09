@@ -24,11 +24,19 @@ contextBridge.exposeInMainWorld("topspeedBuilder", {
   commitSlice: (input: GenerateAssetInput, draft: GridDraft, options: GridSliceOptions) =>
     ipcRenderer.invoke("generate:commit", input, draft, options),
   copyPng: (projectPath: string) => ipcRenderer.invoke("export:copyPng", projectPath),
+  listGenerationHistory: (projectPath: string) => ipcRenderer.invoke("history:list", projectPath),
+  removeGenerationHistory: (projectPath: string, runId: string) =>
+    ipcRenderer.invoke("history:remove", projectPath, runId),
+  saveHistorySnapshot: (projectPath: string, runId: string | null, input: GenerateAssetInput) =>
+    ipcRenderer.invoke("history:saveSnapshot", projectPath, runId, input),
   readImageDataUrl: (projectPath: string, filePath: string) =>
     ipcRenderer.invoke("image:dataUrl", projectPath, filePath),
+  readImageThumbnail: (projectPath: string, runId: string) =>
+    ipcRenderer.invoke("image:thumbnail", projectPath, runId),
   deleteAsset: (projectPath: string, assetId: string) => ipcRenderer.invoke("project:deleteAsset", projectPath, assetId),
   showItemInFolder: (filePath: string) => ipcRenderer.invoke("shell:showItem", filePath),
   showProjectItemInFolder: (projectPath: string, filePath: string) =>
     ipcRenderer.invoke("shell:showProjectItem", projectPath, filePath),
-  openPath: (filePath: string) => ipcRenderer.invoke("shell:openPath", filePath)
+  openPath: (filePath: string) => ipcRenderer.invoke("shell:openPath", filePath),
+  perfLog: (line: string) => ipcRenderer.send("perf:log", line)
 });

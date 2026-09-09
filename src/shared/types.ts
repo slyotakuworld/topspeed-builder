@@ -122,6 +122,14 @@ export interface GenerateAssetInput {
   trimEdges: boolean;
 }
 
+/** 内容感知切分检测出的单格内容区域（像素坐标） */
+export interface GridAutoCell {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 /** generate:grid 产出的“大图草稿”，等待用户在界面确认切分参数后提交 */
 export interface GridDraft {
   runId: string;
@@ -133,17 +141,24 @@ export interface GridDraft {
   count: number;
   prompt: string;
   logs: string[];
+  /** 内容感知切分：生成透明网格后按实际内容检测到的每格区域（供预览与自动切分）；检测失败或非透明时为 undefined */
+  autoCells?: GridAutoCell[];
 }
 
 export interface GridSliceOptions {
   cols: number;
   rows: number;
+  /** 末行实际格数（1..cols）。AI 图最后一行不足满格时会整行均分铺开，
+   *  指定后该行按自身格数等分行宽切割；缺省 = cols（与旧行为一致，整张按 cols 等分）。 */
+  lastRowCols?: number;
   /** 相对默认网格整体水平偏移（像素） */
   shiftX?: number;
   /** 相对默认网格整体垂直偏移（像素） */
   shiftY?: number;
   /** 每格安全边距（每侧占短边的百分比，0-30），用于裁掉格子边缘干扰 */
   shrinkPercent?: number;
+  /** 内容感知切分（默认开启）：按实际内容定位每格切割，不再假设等分；仅在透明背景生成且检测成功时生效，失败自动退回等分 */
+  useAuto?: boolean;
 }
 
 export interface GeneratedAssetResult {
@@ -152,6 +167,53 @@ export interface GeneratedAssetResult {
   metadataPath?: string;
   gridImagePath?: string;
   logs: string[];
+}
+
+/** 切分入库实际使用的网格参数（供历史记录展示/回看） */
+export interface HistorySliceOptions {
+  cols: number;
+  rows: number;
+  lastRowCols: number;
+  shiftX: number;
+  shiftY: number;
+  shrinkPercent: number;
+  /** 本次切分是否使用了内容感知自动切分 */
+  useAuto?: boolean;
+}
+
+/**
+ * 一次「生成」的历史记录：点「生成网格大图」即落一条 draft，
+ * 确认切分入库后由服务端原地更新为 committed（同一 runId）。
+ * 持久化于项目目录 history.json，重启后仍可查看/续做草稿。
+ */
+export interface GenerationHistoryEntry {
+  runId: string;
+  /** draft = 只生成了网格大图草稿；committed = 已切分入库 */
+  status: "draft" | "committed";
+  createdAt: string;
+  committedAt?: string;
+  /** 生成时的完整表单快照：用于历史回看、以及载入草稿后继续切分 */
+  input: GenerateAssetInput;
+  grid: {
+    cols: number;
+    rows: number;
+    width: number;
+    height: number;
+    count: number;
+    /** 相对项目路径，如 generated/raw/<runId>/grid.png */
+    gridImagePath: string;
+    /** 内容感知切分：生成/入库时按实际内容检测到的每格区域（若成功），
+     *  持久化后历史恢复草稿可直接复现绿框预览，保证预览与切分结果一致 */
+    autoCells?: GridAutoCell[];
+  };
+  prompt: string;
+  logs: string[];
+  /** 已入库批次：实际切分参数 */
+  slice?: HistorySliceOptions;
+  assetId?: string;
+  /** 已入库批次：切出的素材文件（相对项目路径） */
+  files?: string[];
+  metadataPath?: string;
 }
 
 export interface IpcResponse<T> {

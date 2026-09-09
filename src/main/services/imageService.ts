@@ -1,7 +1,7 @@
 import path from "node:path";
 import fs from "fs-extra";
 import sharp, { type Raw } from "sharp";
-import type { Size } from "@shared/types";
+import type { GridAutoCell, Size } from "@shared/types";
 
 interface ProcessImageOptions {
   width: number;
@@ -49,6 +49,213 @@ export class ImageProcessingService {
   /** 公开：裁掉透明区域之外的空白边，供网格单格清理使用 */
   async trimToContent(input: Buffer): Promise<Buffer> {
     return this.trimTransparent(input);
+  }
+
+  /**
+   * 内容感知切分：把网格大图里每个素材按「真实内容范围」定位，返回等数量的包围盒供逐格切割。
+   * 前景判定自适应两类画面：
+   *   - 透明背景（alpha 有明显空区）：按 alpha 通道取前景；
+   *   - 不透明均匀底色：按「与四边采样底色」的颜色距离取前景。
+   * 定位分两级：
+   *   1) 4-连通区域标记直接求每块内容的真实包围盒——块数与期望一致时返回（最精确，不再依赖等分）；
+   *   2) 不一致（噪声/残边把素材拆散）时，按期望数量推断的网格把内容块归并到最近槽位后取并集包围盒；
+   *   仍无法得到 expected 个有效格（素材彼此粘连、底色不匀等）返回 null，由调用方退回等分切分。
+   */
+  async detectAutoCells(input: Buffer, expected: number): Promise<GridAutoCell[] | null> {
+    if (!Number.isInteger(expected) || expected < 1 || expected > 200) return null;
+    let raw: { data: Buffer; info: sharp.OutputInfo };
+    try {
+      raw = await sharp(input).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    } catch {
+      return null;
+    }
+    const { data, info } = raw;
+    const width = info.width;
+    const height = info.height;
+    const channels = info.channels;
+    if (width < 32 || height < 32) return null;
+
+    const mask = this.buildContentMask(data, info, channels);
+    if (!mask) return null;
+    const total = width * height;
+    const rawComponents = this.labelComponents(mask, width, height);
+    if (rawComponents.length === 0) return null;
+
+    // 丢弃孤立噪点与过小碎片（少于 ~0.005% 画布或不足 3px）
+    const minArea = Math.max(20, Math.floor(total * 0.00005));
+    const kept = rawComponents.filter(
+      (component) =>
+        component.maxX - component.minX + 1 >= 3 &&
+        component.maxY - component.minY + 1 >= 3 &&
+        component.area >= minArea
+    );
+    if (kept.length === 0) return null;
+
+    // 1) 块数与期望一致：直接按内容包围盒返回（行优先排序保证文件顺序与画面一致）
+    if (kept.length === expected) {
+      kept.sort((a, b) => a.minY - b.minY || a.minX - b.minX);
+      return kept.map((component) => ({
+        left: component.minX,
+        top: component.minY,
+        width: component.maxX - component.minX + 1,
+        height: component.maxY - component.minY + 1
+      }));
+    }
+
+    // 2) 归并兜底：按期望布局把每块内容指派到「中心最近的槽位」，再取各槽位的并集包围盒
+    const cols = Math.ceil(Math.sqrt(expected));
+    const rows = Math.ceil(expected / cols);
+    if (cols < 1 || rows < 1) return null;
+    const stepX = width / cols;
+    const stepY = height / rows;
+    const owners = new Int32Array(kept.length);
+    for (let index = 0; index < kept.length; index += 1) {
+      const component = kept[index];
+      const cx = (component.minX + component.maxX) / 2;
+      const cy = (component.minY + component.maxY) / 2;
+      let bestSlot = 0;
+      let bestDistance = Number.POSITIVE_INFINITY;
+      for (let slot = 0; slot < expected; slot += 1) {
+        const col = slot % cols;
+        const row = Math.floor(slot / cols);
+        const dx = cx / stepX - (col + 0.5);
+        const dy = cy / stepY - (row + 0.5);
+        const distance = dx * dx + dy * dy;
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestSlot = slot;
+        }
+      }
+      owners[index] = bestSlot;
+    }
+
+    const cells: GridAutoCell[] = [];
+    for (let slot = 0; slot < expected; slot += 1) {
+      let minX = width;
+      let minY = height;
+      let maxX = -1;
+      let maxY = -1;
+      for (let index = 0; index < kept.length; index += 1) {
+        if (owners[index] !== slot) continue;
+        const component = kept[index];
+        if (component.minX < minX) minX = component.minX;
+        if (component.minY < minY) minY = component.minY;
+        if (component.maxX > maxX) maxX = component.maxX;
+        if (component.maxY > maxY) maxY = component.maxY;
+      }
+      if (minX > maxX || minY > maxY) return null; // 某槽位无内容：素材粘连无法拆分，退回等分
+      cells.push({
+        left: minX,
+        top: minY,
+        width: maxX - minX + 1,
+        height: maxY - minY + 1
+      });
+    }
+    return cells;
+  }
+
+  /** 生成前景掩码：透明图按 alpha，不透明图按与边缘底色的颜色距离 */
+  private buildContentMask(data: Buffer, info: sharp.OutputInfo, channels: number): Uint8Array | null {
+    const width = info.width;
+    const height = info.height;
+    const total = width * height;
+    let fullyTransparent = 0;
+    let fullyOpaque = 0;
+    for (let i = 0; i < total; i += 1) {
+      const alpha = data[i * channels + 3];
+      if (alpha <= 16) fullyTransparent += 1;
+      else if (alpha >= 240) fullyOpaque += 1;
+    }
+    const transparentRatio = fullyTransparent / total;
+    const opaqueRatio = fullyOpaque / total;
+    const mask = new Uint8Array(total);
+
+    if (transparentRatio > 0.005 && opaqueRatio < 0.985) {
+      // 透明背景：alpha ≥ 24 视为内容（容忍抠图后的细边）
+      for (let i = 0; i < total; i += 1) {
+        if (data[i * channels + 3] >= 24) mask[i] = 1;
+      }
+      return mask;
+    }
+
+    // 不透明均匀底色：与四边采样的主体颜色差异足够大才算内容
+    const background = this.estimateBackgroundFromEdges(data, info);
+    const tolerance = Math.max(18, this.computeAdaptiveTolerance(data, info, background, channels));
+    for (let i = 0; i < total; i += 1) {
+      const offset = i * channels;
+      const dr = data[offset] - background.r;
+      const dg = data[offset + 1] - background.g;
+      const db = data[offset + 2] - background.b;
+      if (dr * dr + dg * dg + db * db > tolerance * tolerance) mask[i] = 1;
+    }
+    return mask;
+  }
+
+  /** 4-连通区域标记：统计每块的像素数与真实包围盒 */
+  private labelComponents(
+    mask: Uint8Array,
+    width: number,
+    height: number
+  ): Array<{ area: number; minX: number; minY: number; maxX: number; maxY: number }> {
+    const total = width * height;
+    const visited = new Uint8Array(total);
+    const stack = new Int32Array(total);
+    const components: Array<{ area: number; minX: number; minY: number; maxX: number; maxY: number }> = [];
+
+    for (let start = 0; start < total; start += 1) {
+      if (!mask[start] || visited[start]) continue;
+      let top = 0;
+      stack[top++] = start;
+      visited[start] = 1;
+      let area = 0;
+      let minX = width;
+      let minY = height;
+      let maxX = -1;
+      let maxY = -1;
+
+      while (top > 0) {
+        const index = stack[--top] as number;
+        area += 1;
+        const x = index % width;
+        const y = (index - x) / width;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+
+        if (x > 0) {
+          const next = index - 1;
+          if (mask[next] && !visited[next]) {
+            visited[next] = 1;
+            stack[top++] = next;
+          }
+        }
+        if (x < width - 1) {
+          const next = index + 1;
+          if (mask[next] && !visited[next]) {
+            visited[next] = 1;
+            stack[top++] = next;
+          }
+        }
+        if (index >= width) {
+          const next = index - width;
+          if (mask[next] && !visited[next]) {
+            visited[next] = 1;
+            stack[top++] = next;
+          }
+        }
+        if (index < total - width) {
+          const next = index + width;
+          if (mask[next] && !visited[next]) {
+            visited[next] = 1;
+            stack[top++] = next;
+          }
+        }
+      }
+
+      components.push({ area, minX, minY, maxX, maxY });
+    }
+    return components;
   }
 
   async normalizeFramesConsistently(inputs: Buffer[], options: ProcessImageOptions): Promise<Buffer[]> {
@@ -632,5 +839,29 @@ export class ImageProcessingService {
       }])
       .png()
       .toBuffer();
+  }
+
+  /**
+   * 读取本地图片为「预览用」dataUrl：最长边超过 maxSide（默认 1024）时在主进程先降采样再返回，
+   * 避免把全尺寸大图整张 base64 丢给渲染进程解码——渲染主线程一次性解码多张 1254-2048px PNG
+   * 会卡死数秒，Windows 上表现为"鼠标正常、所有输入框打字失灵"（键盘/输入法事件流被饿死）。
+   * 原图本就不超过 maxSide 时原样返回（只读文件转 base64），零额外开销。
+   * dataUrl 仅用于界面预览（切分预览/参考图/素材列表），生成与切分始终按文件路径在主进程取原图，
+   * 因此降采样不影响任何下游精度。
+   */
+  async previewDataUrl(absolutePath: string, maxSide = 1024): Promise<string> {
+    const metadata = await sharp(absolutePath, { failOn: "none" }).metadata();
+    const longest = Math.max(metadata.width ?? 0, metadata.height ?? 0);
+    const extension = path.extname(absolutePath).replace(".", "").toLowerCase() || "png";
+    if (longest <= maxSide) {
+      const buffer = await fs.readFile(absolutePath);
+      const mime = extension === "jpg" || extension === "jpeg" ? "image/jpeg" : "image/png";
+      return `data:${mime};base64,${buffer.toString("base64")}`;
+    }
+    const buffer = await sharp(absolutePath, { failOn: "none" })
+      .resize(maxSide, maxSide, { fit: "inside", withoutEnlargement: true })
+      .png()
+      .toBuffer();
+    return `data:image/png;base64,${buffer.toString("base64")}`;
   }
 }

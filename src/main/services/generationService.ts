@@ -7,6 +7,7 @@ import type {
   AssetType,
   GenerateAssetInput,
   GeneratedAssetResult,
+  GridAutoCell,
   GridDraft,
   GridSliceOptions,
   Project,
@@ -15,6 +16,7 @@ import type {
   ReferenceStrength
 } from "@shared/types";
 import { AIGenerationService } from "./aiService";
+import { GenerationHistoryService } from "./generationHistoryService";
 import { ImageProcessingService } from "./imageService";
 import { ProjectService } from "./projectService";
 import { SettingsService } from "./settingsService";
@@ -31,7 +33,8 @@ export class GenerationService {
     private readonly settingsService: SettingsService,
     private readonly projectService: ProjectService,
     private readonly aiService: AIGenerationService,
-    private readonly imageService: ImageProcessingService
+    private readonly imageService: ImageProcessingService,
+    private readonly historyService: GenerationHistoryService
   ) {}
 
   /** 第一阶段：让 AI 生成“一张含 count 个素材的网格大图”草稿，不写库 */
@@ -63,6 +66,8 @@ export class GenerationService {
     const gridPath = path.join(project.path, "generated", "raw", runId, "grid.png");
     await fs.ensureDir(path.dirname(gridPath));
     await fs.writeFile(gridPath, gridBuffer);
+    // 顺手落一张 160px 缩略图：历史时间轴展示时只读小文件，避免日后冷解码整张大图卡住界面
+    await this.historyService.writeThumbnailFromBuffer(project.path, runId, gridBuffer);
     logs.push(`保存网格大图: ${gridPath}`);
     if (input.transparentBackground) {
       logs.push("透明背景：已对网格大图执行背景移除，素材将输出为透明 PNG。");
@@ -71,6 +76,37 @@ export class GenerationService {
     const metadata = await sharp(gridBuffer).metadata();
     const width = metadata.width ?? 1024;
     const height = metadata.height ?? 1024;
+
+    // 内容感知切分预检：尝试按实际内容定位每格（透明图走 alpha，不透明均匀底色自动识别）；
+    // 成功则前端可预览绿色定位框，失败记录一条日志（切分时仍会再试一次并自动退回等分）。只在多格时启用。
+    let autoCells: GridAutoCell[] | undefined;
+    if (count > 1) {
+      autoCells = (await this.imageService.detectAutoCells(gridBuffer, count)) ?? undefined;
+      logs.push(
+        autoCells
+          ? `内容感知切分：检测到 ${autoCells.length} 个素材的实际位置，切分将按内容边界对齐而非等分。`
+          : "内容感知切分：未能在图中稳定分离出每个素材（间距过小、边缘粘连或底色不均），切分将退回等分网格。"
+      );
+    }
+
+    // 每次生成都落一条草稿历史：崩溃重启后也能找回并继续切分
+    await this.historyService.upsert(project.path, {
+      runId,
+      status: "draft",
+      createdAt: nowIso(),
+      input,
+      grid: {
+        cols: grid.cols,
+        rows: grid.rows,
+        width,
+        height,
+        count,
+        gridImagePath: toRelative(project.path, gridPath),
+        autoCells: autoCells && autoCells.length > 0 ? autoCells : undefined
+      },
+      prompt,
+      logs: [...logs]
+    });
 
     return {
       runId,
@@ -81,7 +117,8 @@ export class GenerationService {
       rows: grid.rows,
       count,
       prompt,
-      logs
+      logs,
+      autoCells
     };
   }
 
@@ -101,7 +138,6 @@ export class GenerationService {
     const cols = this.clampInt(options.cols || draft.cols, 1, 24);
     const rows = this.clampInt(options.rows || draft.rows, 1, 24);
     const count = this.effectiveCount(input);
-    const sliceCount = Math.min(count, cols * rows);
     const shrinkPercent = this.clampInt(options.shrinkPercent ?? 8, 0, 30);
     const shiftX = this.clampInt(options.shiftX ?? 0, -1024, 1024);
     const shiftY = this.clampInt(options.shiftY ?? 0, -1024, 1024);
@@ -111,15 +147,55 @@ export class GenerationService {
     const info = await image.metadata();
     const width = info.width ?? draft.width;
     const height = info.height ?? draft.height;
-    const stepX = width / cols;
-    const stepY = height / rows;
-    const cellW = Math.floor(stepX);
-    const cellH = Math.floor(stepY);
-    if (cellW < 4 || cellH < 4) {
-      throw new Error(`网格过大（${cols}×${rows}），单格小于 4px，无法切分。`);
-    }
 
-    const inset = Math.floor((Math.min(cellW, cellH) * shrinkPercent) / 200);
+    // 内容感知切分：多格时按真实内容定位每格（透明图走 alpha，不透明图自动识别均匀底色），
+    // 检测结果与期望数一致才启用，否则退回等分网格。cutBoxes 同时用于统一逐格切割。
+    const useAuto = options.useAuto !== false && count > 1;
+    const autoCells: GridAutoCell[] | null = useAuto
+      ? await this.imageService.detectAutoCells(buffer, count)
+      : null;
+    let sliceCount: number;
+    let cutBoxes: Array<{ left: number; top: number; width: number; height: number }>;
+    let cellW = 0;
+    let cellH = 0;
+    let lastRowCols = cols;
+    let equalMode = false;
+
+    if (autoCells) {
+      sliceCount = count;
+      cutBoxes = autoCells;
+      logs.push(`内容感知切分：检测到 ${autoCells.length} 个素材的实际位置，按内容边界切割（忽略等分网格）。`);
+    } else {
+      equalMode = true;
+      // 等分兜底：整张按 cols×rows 的固定列槽切分，只取前 sliceCount 个槽位。
+      // 末行不满时 AI 被提示"靠左填列槽、右侧留白"，因此槽位切割始终与画面一致。
+      const gridSlots = cols * rows;
+      sliceCount = Math.min(count, gridSlots);
+      lastRowCols = this.clampInt(
+        sliceCount - (rows - 1) * cols,
+        1,
+        cols
+      );
+      const stepX = width / cols;
+      const stepY = height / rows;
+      cellW = Math.floor(stepX);
+      cellH = Math.floor(stepY);
+      if (cellW < 4 || cellH < 4) {
+        throw new Error(`网格过大（${cols}×${rows}），单格小于 4px，无法切分。`);
+      }
+      const inset = Math.floor((Math.min(cellW, cellH) * shrinkPercent) / 200);
+      cutBoxes = [];
+      for (let slot = 0; slot < sliceCount; slot += 1) {
+        const row = Math.floor(slot / cols);
+        const col = slot % cols;
+        const startX = Math.round(shiftX + col * stepX + inset);
+        const endX = Math.round(shiftX + (col + 1) * stepX - inset);
+        const startY = Math.round(shiftY + row * stepY + inset);
+        const endY = Math.round(shiftY + (row + 1) * stepY - inset);
+        cutBoxes.push({ left: startX, top: startY, width: endX - startX, height: endY - startY });
+      }
+      logs.push(`等分网格切分：${cols}×${rows} 列槽，共切 ${sliceCount} 个。`);
+    }
 
     const assetName = sanitizeFileName(input.name || input.assetType);
     const storageName = this.storageName(assetName, draft.runId);
@@ -129,13 +205,12 @@ export class GenerationService {
     const names: string[] = [];
     const cropResults: Array<{ index: number; name: string; width: number; height: number }> = [];
 
-    for (let index = 0; index < sliceCount; index += 1) {
-      const col = index % cols;
-      const row = Math.floor(index / cols);
-      const startX = this.clampInt(Math.round(shiftX + col * stepX + inset), 0, width - 1);
-      const endX = this.clampInt(Math.round(shiftX + (col + 1) * stepX - inset), startX + 1, width);
-      const startY = this.clampInt(Math.round(shiftY + row * stepY + inset), 0, height - 1);
-      const endY = this.clampInt(Math.round(shiftY + (row + 1) * stepY - inset), startY + 1, height);
+    for (let index = 0; index < cutBoxes.length; index += 1) {
+      const box = cutBoxes[index];
+      const startX = this.clampInt(Math.round(box.left), 0, width - 1);
+      const endX = this.clampInt(Math.round(box.left + box.width), startX + 1, width);
+      const startY = this.clampInt(Math.round(box.top), 0, height - 1);
+      const endY = this.clampInt(Math.round(box.top + box.height), startY + 1, height);
 
       try {
         let cellBuffer = await image
@@ -183,7 +258,12 @@ export class GenerationService {
       throw new Error(`网格切分失败，没有成功输出。日志：${logs.join(" | ")}`);
     }
 
-    const size = { width: cellW, height: cellH };
+    const maxCellW = cropResults.reduce((max, item) => Math.max(max, item.width), 0);
+    const maxCellH = cropResults.reduce((max, item) => Math.max(max, item.height), 0);
+    // 内容切分每格尺寸由内容决定（可能各不相同）；等分模式统一为网格单元尺寸
+    const size = equalMode
+      ? { width: cellW, height: cellH }
+      : { width: Math.max(1, maxCellW), height: Math.max(1, maxCellH) };
     const metadataPath = path.join(outputDirectory, `${storageName}_metadata.json`);
     await writeJsonFile(metadataPath, {
       name: input.name,
@@ -195,12 +275,14 @@ export class GenerationService {
       grid: {
         cols,
         rows,
+        lastRowCols,
         count: sliceCount,
         imageWidth: width,
         imageHeight: height,
         shiftX,
         shiftY,
-        shrinkPercent
+        shrinkPercent,
+        mode: equalMode ? "equal" : "auto"
       },
       files,
       cells: cropResults,
@@ -218,6 +300,31 @@ export class GenerationService {
     });
 
     await this.persistResult(project, input, asset, logs, files);
+
+    // 入库成功：把同一 runId 的草稿记录原地更新为已入库（保留原始生成时间与生成日志）
+    const previousHistory = await this.historyService.get(project.path, draft.runId);
+    await this.historyService.upsert(project.path, {
+      runId: draft.runId,
+      status: "committed",
+      createdAt: previousHistory?.createdAt ?? nowIso(),
+      committedAt: nowIso(),
+      input,
+      grid: {
+        cols,
+        rows,
+        width,
+        height,
+        count: sliceCount,
+        gridImagePath: draft.gridImagePath,
+        autoCells: autoCells && autoCells.length > 0 ? autoCells : undefined
+      },
+      prompt: draft.prompt,
+      logs: [...(previousHistory?.logs ?? []), ...logs],
+      slice: { cols, rows, lastRowCols, shiftX, shiftY, shrinkPercent, useAuto: !equalMode },
+      assetId: asset.id,
+      files: [...files],
+      metadataPath: asset.metadataPath
+    });
 
     return {
       asset,
@@ -254,11 +361,20 @@ export class GenerationService {
         : "";
     const description = (input.description || "").trim();
     const descriptionLine = description ? `Overall content description: ${description}.` : "";
+    // 末行可能不满：引导 AI 把末行内容“靠左对齐进列槽、其余槽位留白”，
+    // 这样无论内容感知切分还是等分列槽兜底都与画面一致。
+    const lastRowCount = count - (rows - 1) * cols;
+    const gridLayout =
+      rows <= 1
+        ? `arranged in ${cols} columns x 1 row, filled from left to right: place the ${count} items into the leftmost ${count} column slots and leave the remaining slots of the row EMPTY`
+        : lastRowCount > 0
+          ? `arranged in ${cols} columns x ${rows} rows, filled strictly row by row from left to right: the first ${rows - 1} rows each hold exactly ${cols} items aligned to the ${cols} column slots, and the final row holds only ${lastRowCount} items aligned to the LEFTMOST ${lastRowCount} column slots with the remaining slots of that row LEFT EMPTY`
+          : `arranged in ${cols} columns x ${rows} rows, filled strictly row by row from left to right: the first ${rows} rows each hold exactly ${cols} items aligned to the ${cols} column slots (the final row is entirely EMPTY)`;
     const header = singleShot
       ? isIllustration
         ? "Generate ONE full-canvas 2D game illustration: the entire canvas is one finished piece of artwork."
         : `Generate ONE 2D game ${nouns.singular}: the whole canvas holds a single complete ${nouns.singular}, centered with a small safe margin.`
-      : `Generate one large 2D game art sheet containing ${count} independent ${nouns.plural}, evenly arranged into a ${cols} x ${rows} grid (filled row by row from left to right).`;
+      : `Generate one large 2D game art sheet containing exactly ${count} independent ${nouns.plural}, ${gridLayout}. Do NOT add more than ${count} items.`;
     const layoutRule = singleShot
       ? "Composition rule: keep the described content as the focus of the whole image, with a balanced, complete composition and a small safe margin at the borders; do NOT draw grid lines and do NOT split the canvas into multiple separate assets."
       : "Grid rules: exactly one complete subject per cell, centered and well separated from its cell borders; subjects must not overlap or touch each other; do NOT draw grid lines or borders; do NOT repeat or duplicate any subject; keep the art style, color palette and lighting consistent across the whole image.";

@@ -11,6 +11,7 @@ import type {
   Project
 } from "@shared/types";
 import { AIGenerationService } from "./services/aiService";
+import { GenerationHistoryService } from "./services/generationHistoryService";
 import { GenerationService } from "./services/generationService";
 import { ImageProcessingService } from "./services/imageService";
 import { ProjectService } from "./services/projectService";
@@ -23,12 +24,52 @@ const projectService = new ProjectService(settingsService);
 const referenceService = new ReferenceService();
 const aiService = new AIGenerationService();
 const imageService = new ImageProcessingService();
+const historyService = new GenerationHistoryService();
 const generationService = new GenerationService(
   settingsService,
   projectService,
   aiService,
-  imageService
+  imageService,
+  historyService
 );
+
+// ---- 运行时性能诊断：记录到 <userData>/perf-log.txt，便于定位「历史加载后输入卡顿」类问题 ----
+const perfLogPath = path.join(app.getPath("userData"), "perf-log.txt");
+let perfLogWrites = 0;
+function appendPerfLine(line: string): void {
+  perfLogWrites += 1;
+  void (async () => {
+    try {
+      await fs.ensureDir(path.dirname(perfLogPath));
+      if (perfLogWrites === 1 || (await fs.pathExists(perfLogPath)) === false) {
+        await fs.writeFile(perfLogPath, "");
+      }
+      // 防日志无限膨胀：超过 1MB 时丢弃最旧一半
+      const stat = await fs.stat(perfLogPath).catch(() => null);
+      if (stat && stat.size > 1024 * 1024) {
+        const raw = await fs.readFile(perfLogPath, "utf8");
+        await fs.writeFile(perfLogPath, raw.slice(raw.length - 512 * 1024));
+      }
+      await fs.appendFile(perfLogPath, `${new Date().toISOString()} ${line}\n`);
+    } catch {
+      // 诊断日志失败不影响主流程
+    }
+  })();
+}
+let perfLagLast = Date.now();
+function installPerfSamplers(): void {
+  // 渲染进程单向上报（长任务/链路计时）
+  ipcMain.on("perf:log", (_event, line: unknown) => {
+    if (typeof line === "string") appendPerfLine(`[renderer] ${line.slice(0, 500)}`);
+  });
+  // 主进程事件循环延迟采样：2s 心跳，漂移 >150ms 说明主进程被长时间阻塞
+  setInterval(() => {
+    const now = Date.now();
+    const drift = now - perfLagLast - 2000;
+    perfLagLast = now;
+    if (drift > 150) appendPerfLine(`[main] event-loop lag ~${drift}ms (blocked)`);
+  }, 2000);
+}
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -72,13 +113,23 @@ function registerIpc(): void {
     return result.canceled || result.filePaths.length === 0 ? "" : result.filePaths[0];
   });
 
-  handle("project:deleteAsset", (projectPath: string, assetId: string) => projectService.deleteAsset(projectPath, assetId));
+  handle("project:deleteAsset", async (projectPath: string, assetId: string) => {
+    const project = await projectService.deleteAsset(projectPath, assetId);
+    await historyService.removeByAsset(projectPath, assetId);
+    return project;
+  });
   handle("reference:chooseImages", (projectPath: string) => referenceService.chooseReferenceImages(projectPath));
 
   handle("generate:grid", (input: GenerateAssetInput) => generationService.generateGrid(input));
   handle("generate:commit", (input: GenerateAssetInput, draft: GridDraft, options: GridSliceOptions) =>
     generationService.commitSlice(input, draft, options)
   );
+  handle("history:list", (projectPath: string) => historyService.list(projectPath));
+  handle("history:remove", (projectPath: string, runId: string) => historyService.remove(projectPath, runId));
+  handle("history:saveSnapshot", (projectPath: string, runId: string | null, input: GenerateAssetInput) =>
+    historyService.saveSnapshot(projectPath, runId, input)
+  );
+  handle("image:thumbnail", (projectPath: string, runId: string) => historyService.thumbnailDataUrl(projectPath, runId));
   handle("export:copyPng", async (projectPath: string) => {
     const project = await projectService.openProjectPath(projectPath);
     const settings = await settingsService.getSettings();
@@ -97,10 +148,8 @@ function registerIpc(): void {
 
   handle("image:dataUrl", async (projectPath: string, filePath: string) => {
     const absolutePath = resolveProjectPath(projectPath, filePath);
-    const buffer = await fs.readFile(absolutePath);
-    const extension = path.extname(absolutePath).replace(".", "").toLowerCase() || "png";
-    const mime = extension === "jpg" || extension === "jpeg" ? "image/jpeg" : "image/png";
-    return `data:${mime};base64,${buffer.toString("base64")}`;
+    // 预览通道：超过 1024px 的大图在主进程降采样后再返回，绝不让渲染进程解码全尺寸网格图/参考图
+    return imageService.previewDataUrl(absolutePath, 1024);
   });
 
   handle("shell:showItem", async (filePath: string) => {
@@ -141,6 +190,7 @@ function handle<TArgs extends unknown[], TResult>(
 
 app.whenReady().then(() => {
   registerIpc();
+  installPerfSamplers();
   createWindow();
 
   app.on("activate", () => {

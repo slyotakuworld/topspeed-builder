@@ -2,6 +2,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import fs from "fs-extra";
 import sharp from "sharp";
+import type { Raw } from "sharp";
 import type {
   Asset,
   AssetType,
@@ -155,9 +156,12 @@ export class GenerationService {
     // 内容感知切分：多格时按真实内容定位每格（透明图走 alpha，不透明图自动识别均匀底色），
     // 检测结果与期望数一致才启用，否则退回等分网格。cutBoxes 同时用于统一逐格切割。
     const useAuto = options.useAuto !== false && count > 1;
-    const autoCells: GridAutoCell[] | null = useAuto
-      ? await this.imageService.detectAutoCells(buffer, count)
+    const autoResult = useAuto
+      ? await this.imageService.detectAutoCellsWithMask(buffer, count)
       : null;
+    const autoCells: GridAutoCell[] | null = autoResult?.cells ?? null;
+    // 逐格蒙版标签：每个内容像素标记其所属素材分组，用于裁图时把落入本格但属于邻格的碎片置透明
+    const sliceLabelMask: Int32Array | null = autoResult?.labelMask ?? null;
     let sliceCount: number;
     let cutBoxes: Array<{ left: number; top: number; width: number; height: number }>;
     let cellW = 0;
@@ -239,6 +243,22 @@ export class GenerationService {
           })
           .png()
           .toBuffer();
+
+        // 逐格蒙版裁切：把框内"属于其他素材（或邻格碎片）"的像素置透明，消除切图互相夹带碎片。
+        // 仅在内容感知模式下生效（sliceLabelMask 由 detectAutoCellsWithMask 提供，等分模式为 null）。
+        if (sliceLabelMask) {
+          cellBuffer = await this.applyCellMask(
+            cellBuffer,
+            sliceLabelMask,
+            startX,
+            startY,
+            endX - startX,
+            endY - startY,
+            index,
+            width,
+            height
+          );
+        }
 
         if (input.transparentBackground) {
           cellBuffer = await this.imageService.removeBackground(cellBuffer);
@@ -349,6 +369,70 @@ export class GenerationService {
       gridImagePath: draft.gridImagePath,
       logs
     };
+  }
+
+  /**
+   * 逐格蒙版裁切：把单格裁图里"非本格内容"的像素置透明。
+   * labelMask 与大图同尺寸，每个内容像素标记所属素材分组（0=背景，i+1=第 i 格）。
+   * 本格裁图框内若落入其他素材的像素（如 A 的武器尖飘进 B 的框、或 B 的碎片落在 A 的框），
+   * 这些像素的标签 ≠ 本格 → 置 alpha=0，使结果只保留本格素材、不再夹带邻格碎片。
+   * 只在边界处动刀、不改任何本格内容，故不丢素材。
+   */
+  private async applyCellMask(
+    cellBuffer: Buffer,
+    labelMask: Int32Array,
+    startX: number,
+    startY: number,
+    cellW: number,
+    cellH: number,
+    groupIndex: number,
+    imgW: number,
+    imgH: number
+  ): Promise<Buffer> {
+    const { data, info } = await sharp(cellBuffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const channels = info.channels;
+    const want = groupIndex + 1;
+
+    // 先扫描本格框内的标签归属比例。若属于自己标签的像素极少（<5%），
+    // 说明该格主体内容与邻格在掩码里被判定为同一连通块（例如上下两格角色相连）。
+    // 此时强行置透明会把本格主体误删成 1×2 碎片，必须回退到矩形裁切。
+    let selfPixels = 0;
+    let totalContentPixels = 0;
+    for (let y = 0; y < cellH; y += 1) {
+      const gy = startY + y;
+      if (gy < 0 || gy >= imgH) continue;
+      const rowBase = gy * imgW;
+      for (let x = 0; x < cellW; x += 1) {
+        const gx = startX + x;
+        if (gx < 0 || gx >= imgW) continue;
+        const label = labelMask[rowBase + gx];
+        if (label !== 0) {
+          totalContentPixels += 1;
+          if (label === want) selfPixels += 1;
+        }
+      }
+    }
+    if (totalContentPixels > 0 && selfPixels / totalContentPixels < 0.05) {
+      return cellBuffer;
+    }
+
+    for (let y = 0; y < cellH; y += 1) {
+      const gy = startY + y;
+      if (gy < 0 || gy >= imgH) continue;
+      const rowBase = gy * imgW;
+      const localRow = y * cellW * channels;
+      for (let x = 0; x < cellW; x += 1) {
+        const gx = startX + x;
+        if (gx < 0 || gx >= imgW) continue;
+        const label = labelMask[rowBase + gx];
+        if (label !== 0 && label !== want) {
+          data[localRow + x * channels + 3] = 0;
+        }
+      }
+    }
+    return sharp(data, { raw: { width: cellW, height: cellH, channels: channels as Raw["channels"] } })
+      .png()
+      .toBuffer();
   }
 
   // ---- 网格布局与提示词 ----

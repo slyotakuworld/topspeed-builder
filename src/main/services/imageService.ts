@@ -33,6 +33,17 @@ interface BoundingComponent {
   maxY: number;
 }
 
+/** detectAutoCells 内部核心结果：包围盒 + 各连通块分组 + 内容掩码，供逐格蒙版裁切复用 */
+interface AutoCellCore {
+  cells: GridAutoCell[];
+  /** 各组最终包围盒（与 cells 同序）；投影兜底 / 槽位兜底等无分组信息时可能为 null（此时不做蒙版裁切） */
+  groups: BoundingComponent[] | null;
+  /** 与原始大图同尺寸的内容掩码（含 removeTinyNoise 后的结果） */
+  mask: Uint8Array;
+  width: number;
+  height: number;
+}
+
 export class ImageProcessingService {
   async processImage(input: Buffer, options: ProcessImageOptions): Promise<Buffer> {
     let output = await this.prepareForeground(input, options);
@@ -61,7 +72,8 @@ export class ImageProcessingService {
   }
 
   /**
-   * 内容感知切分：把网格大图里每个素材按「真实内容范围」定位，返回包围盒供逐格切割。
+   * 内容感知切分核心：把网格大图里每个素材按「真实内容范围」定位，返回包围盒 + 分组 + 掩码（AutoCellCore）。
+   * 公开方法 detectAutoCells / detectAutoCellsWithMask 都建立在此之上；前者只取 cells，后者附带逐格蒙版标签。
    * 前景判定自适应两类画面：
    *   - 透明背景（alpha 有明显空区）：按 alpha 通道取前景；
    *   - 不透明均匀底色：按「与四边采样底色」的颜色距离取前景。
@@ -79,7 +91,7 @@ export class ImageProcessingService {
    *   调用方据此「按实际数量切分并如实提示」，不补空槽。
    * 连主躯干都无法可靠定位、或定位数量不足 expected 的一半且投影也救不回来时返回 null，调用方退回等分切分。
    */
-  async detectAutoCells(input: Buffer, expected: number): Promise<GridAutoCell[] | null> {
+  private async computeAutoCells(input: Buffer, expected: number): Promise<AutoCellCore | null> {
     if (!Number.isInteger(expected) || expected < 1 || expected > 200) return null;
     let raw: { data: Buffer; info: sharp.OutputInfo };
     try {
@@ -154,7 +166,7 @@ export class ImageProcessingService {
       groups = this.mergeNearestGroups(groups, expected, gateRadius);
       if (groups.length > expected) {
         const slotted = this.assignComponentsToSlots(groups, expected, cols, rows, width, height);
-        if (slotted) return slotted;
+        if (slotted) return { cells: slotted, groups: null, mask, width, height };
       }
     }
 
@@ -163,7 +175,7 @@ export class ImageProcessingService {
       const projected = this.inferGridFromMask(mask, width, height, cols, rows);
       if (projected) {
         const slice = projected.slice(0, expected);
-        if (slice.length === expected) return slice;
+        if (slice.length === expected) return { cells: slice, groups: null, mask, width, height };
       }
       return null;
     }
@@ -189,12 +201,163 @@ export class ImageProcessingService {
     if (maxCellArea > medianArea * 12) return null;
 
     groups.sort((a, b) => a.minY - b.minY || a.minX - b.minX);
-    return groups.map((component) => ({
+
+    // 过滤退化噪点分组：宽高/面积极小的组不可能是真实素材，而是粘连拆分或 absorbFragments 残留的
+    // 一两个像素碎片。保留它们会在输出里产生 1×2 之类的空切片，必须剔除，避免污染结果。
+    const minCellSize = 16;
+    const minCellArea = 256;
+    groups = groups.filter((group) => {
+      const w = group.maxX - group.minX + 1;
+      const h = group.maxY - group.minY + 1;
+      return w >= minCellSize && h >= minCellSize && w * h >= minCellArea;
+    });
+
+    const cells: GridAutoCell[] = groups.map((component) => ({
       left: component.minX,
       top: component.minY,
       width: component.maxX - component.minX + 1,
       height: component.maxY - component.minY + 1
     }));
+    return { cells, groups, mask, width, height };
+  }
+
+  /** 公开：仅返回包围盒（供界面预览 / 重检测 IPC 复用，无需蒙版） */
+  async detectAutoCells(input: Buffer, expected: number): Promise<GridAutoCell[] | null> {
+    const core = await this.computeAutoCells(input, expected);
+    return core ? core.cells : null;
+  }
+
+  /**
+   * 公开：内容感知切分 + 逐格蒙版标签。除返回每个素材的包围盒外，额外给出与大图同尺寸的
+   * 标签掩码（每个内容像素标记其所属素材分组 id，背景为 0），供 commitSlice 在裁图时把
+   * 落入本格框、但属于邻格（或被粘连进来的邻格碎片）的像素置透明，从而消除"切图互相夹带碎片"。
+   */
+  async detectAutoCellsWithMask(
+    input: Buffer,
+    expected: number
+  ): Promise<{ cells: GridAutoCell[]; labelMask: Int32Array | null; width: number; height: number } | null> {
+    const core = await this.computeAutoCells(input, expected);
+    if (!core) return null;
+    const labelMask = core.groups
+      ? this.buildCellLabelMask(core.mask, core.width, core.height, core.groups)
+      : null;
+    return { cells: core.cells, labelMask, width: core.width, height: core.height };
+  }
+
+  /**
+   * 由内容掩码构建逐像素"所属素材"标签：
+   * 每个连通块按其中心归入最近的素材分组（中心落在该组包围盒内优先；否则取最近组），
+   * 同组连通块（含连到身上的武器、被 absorbFragments 并进的边角料）共享同一标签。
+   * 返回 Int32Array：0=背景，i+1=第 i 个 cell 的内容。commitSlice 据此把"非本格"像素置透明。
+   */
+  private buildCellLabelMask(
+    mask: Uint8Array,
+    width: number,
+    height: number,
+    groups: BoundingComponent[]
+  ): Int32Array {
+    const { labels, components } = this.labelComponentsWithIds(mask, width, height);
+    const compGroup = new Int32Array(components.length).fill(-1);
+    for (let ci = 0; ci < components.length; ci += 1) {
+      const comp = components[ci];
+      let bestIndex = -1;
+      let bestContains = false;
+      let bestDist = Number.POSITIVE_INFINITY;
+      for (let gi = 0; gi < groups.length; gi += 1) {
+        const g = groups[gi];
+        const contains = comp.cx >= g.minX && comp.cx <= g.maxX && comp.cy >= g.minY && comp.cy <= g.maxY;
+        const dist = this.pointToBoxDistance(comp.cx, comp.cy, g);
+        if (contains) {
+          if (!bestContains || dist < bestDist) {
+            bestContains = true;
+            bestDist = dist;
+            bestIndex = gi;
+          }
+        } else if (!bestContains && dist < bestDist) {
+          bestDist = dist;
+          bestIndex = gi;
+        }
+      }
+      compGroup[ci] = bestIndex;
+    }
+    const cellLabels = new Int32Array(width * height);
+    for (let p = 0; p < cellLabels.length; p += 1) {
+      const cid = labels[p];
+      if (cid === 0) continue;
+      const gi = compGroup[cid - 1];
+      if (gi < 0) continue;
+      cellLabels[p] = gi + 1;
+    }
+    return cellLabels;
+  }
+
+  /** 4-连通区域标记并返回每像素的连通块 id（1-based）+ 各块质心，供 buildCellLabelMask 用 */
+  private labelComponentsWithIds(
+    mask: Uint8Array,
+    width: number,
+    height: number
+  ): { labels: Int32Array; components: Array<{ cx: number; cy: number; minX: number; minY: number; maxX: number; maxY: number }> } {
+    const total = width * height;
+    const labels = new Int32Array(total);
+    const stack = new Int32Array(total);
+    const components: Array<{ cx: number; cy: number; minX: number; minY: number; maxX: number; maxY: number }> = [];
+    let nextId = 1;
+    for (let start = 0; start < total; start += 1) {
+      if (!mask[start] || labels[start]) continue;
+      let top = 0;
+      stack[top++] = start;
+      labels[start] = nextId;
+      let minX = width;
+      let minY = height;
+      let maxX = -1;
+      let maxY = -1;
+      let sumX = 0;
+      let sumY = 0;
+      let count = 0;
+      while (top > 0) {
+        const index = stack[--top] as number;
+        const x = index % width;
+        const y = (index - x) / width;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+        sumX += x;
+        sumY += y;
+        count += 1;
+        if (x > 0) {
+          const next = index - 1;
+          if (mask[next] && !labels[next]) {
+            labels[next] = nextId;
+            stack[top++] = next;
+          }
+        }
+        if (x < width - 1) {
+          const next = index + 1;
+          if (mask[next] && !labels[next]) {
+            labels[next] = nextId;
+            stack[top++] = next;
+          }
+        }
+        if (index >= width) {
+          const next = index - width;
+          if (mask[next] && !labels[next]) {
+            labels[next] = nextId;
+            stack[top++] = next;
+          }
+        }
+        if (index < total - width) {
+          const next = index + width;
+          if (mask[next] && !labels[next]) {
+            labels[next] = nextId;
+            stack[top++] = next;
+          }
+        }
+      }
+      components.push({ cx: sumX / count, cy: sumY / count, minX, minY, maxX, maxY });
+      nextId += 1;
+    }
+    return { labels, components };
   }
 
   /** 生成前景掩码：透明图按 alpha，不透明图按与边缘底色的颜色距离 */

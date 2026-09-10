@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld("topspeedBuilder", {
   generateGrid: (input: GenerateAssetInput) => ipcRenderer.invoke("generate:grid", input),
   commitSlice: (input: GenerateAssetInput, draft: GridDraft, options: GridSliceOptions) =>
     ipcRenderer.invoke("generate:commit", input, draft, options),
+  detectAutoCells: (projectPath: string, gridImagePath: string, count: number) =>
+    ipcRenderer.invoke("grid:detectAutoCells", projectPath, gridImagePath, count),
   copyPng: (projectPath: string) => ipcRenderer.invoke("export:copyPng", projectPath),
   listGenerationHistory: (projectPath: string) => ipcRenderer.invoke("history:list", projectPath),
   removeGenerationHistory: (projectPath: string, runId: string) =>

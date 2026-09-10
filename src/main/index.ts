@@ -124,6 +124,14 @@ function registerIpc(): void {
   handle("generate:commit", (input: GenerateAssetInput, draft: GridDraft, options: GridSliceOptions) =>
     generationService.commitSlice(input, draft, options)
   );
+  // 对已有大图重新跑一次内容感知检测（不重新生成图）。载入历史草稿时用它刷新绿框预览，
+  // 避免看到旧算法留下的缓存结果——真正切分时 commitSlice 本来就会重算，两者必须一致。
+  handle("grid:detectAutoCells", async (projectPath: string, gridImagePath: string, count: number) => {
+    if (count <= 1) return null;
+    const absolutePath = resolveProjectPath(projectPath, gridImagePath);
+    if (!(await fs.pathExists(absolutePath))) return null;
+    return imageService.detectAutoCells(await fs.readFile(absolutePath), count);
+  });
   handle("history:list", (projectPath: string) => historyService.list(projectPath));
   handle("history:remove", (projectPath: string, runId: string) => historyService.remove(projectPath, runId));
   handle("history:saveSnapshot", (projectPath: string, runId: string | null, input: GenerateAssetInput) =>

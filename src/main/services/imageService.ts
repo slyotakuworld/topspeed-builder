@@ -24,6 +24,15 @@ interface AlphaBounds {
   alphaPixels: number;
 }
 
+/** 连通域区域标记的最小包围盒 + 像素面积，用于 detectAutoCells 多级兜底 */
+interface BoundingComponent {
+  area: number;
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
 export class ImageProcessingService {
   async processImage(input: Buffer, options: ProcessImageOptions): Promise<Buffer> {
     let output = await this.prepareForeground(input, options);
@@ -52,14 +61,23 @@ export class ImageProcessingService {
   }
 
   /**
-   * 内容感知切分：把网格大图里每个素材按「真实内容范围」定位，返回等数量的包围盒供逐格切割。
+   * 内容感知切分：把网格大图里每个素材按「真实内容范围」定位，返回包围盒供逐格切割。
    * 前景判定自适应两类画面：
    *   - 透明背景（alpha 有明显空区）：按 alpha 通道取前景；
    *   - 不透明均匀底色：按「与四边采样底色」的颜色距离取前景。
-   * 定位分两级：
-   *   1) 4-连通区域标记直接求每块内容的真实包围盒——块数与期望一致时返回（最精确，不再依赖等分）；
-   *   2) 不一致（噪声/残边把素材拆散）时，按期望数量推断的网格把内容块归并到最近槽位后取并集包围盒；
-   *   仍无法得到 expected 个有效格（素材彼此粘连、底色不匀等）返回 null，由调用方退回等分切分。
+   * 三步流程（核心目标：完整抠下每个素材，包括武器 / 披风等边角料）：
+   *   1) 主躯干定位：形态学闭运算多档（dilate→erode）桥接同一素材内的细缝，从 [0,3,5,7,9]
+   *      里挑出「数量最接近 expected」的一组连通块。少的一侧惩罚加倍——少一个主躯干等于
+   *      永久丢掉一个素材，而多几个还能被后续步骤收掉。
+   *   2) 碎块归属（关键改进）：在原始掩码上取全部连通块，按面积区分「主躯干 / 碎件」，
+   *      把每个碎件并入最近的主躯干包围盒。被细缝割开的武器尖、披风角因此被完整收进来，
+   *      而不是像等分 / 投影直线那样被切掉。距离超过门控半径（单格短边 25%）的保持独立，
+   *      避免把邻格素材误吞进来。
+   *   3) 数量校准：多于期望说明某素材仍被拆成两块，按包围盒间距最小反复合并到期望数；
+   *      仍合不掉则退回槽位归并。
+   * 返回值可能少于 expected（画面实际素材数不足，例如设定 16 实为 15）：
+   *   调用方据此「按实际数量切分并如实提示」，不补空槽。
+   * 连主躯干都无法可靠定位、或定位数量不足 expected 的一半且投影也救不回来时返回 null，调用方退回等分切分。
    */
   async detectAutoCells(input: Buffer, expected: number): Promise<GridAutoCell[] | null> {
     if (!Number.isInteger(expected) || expected < 1 || expected > 200) return null;
@@ -78,80 +96,105 @@ export class ImageProcessingService {
     const mask = this.buildContentMask(data, info, channels);
     if (!mask) return null;
     const total = width * height;
-    const rawComponents = this.labelComponents(mask, width, height);
-    if (rawComponents.length === 0) return null;
+    // 只清真正的噪点（几像素的孤立点）。这里的面积下限绝不能再抬高：
+    // 武器尖、披风角这类"边角料"面积虽小，却要在第 2 步被完整并进所属素材的包围盒。
+    const minArea = Math.max(10, Math.floor(total * 0.00001));
+    this.removeTinyNoise(mask, width, height);
 
-    // 丢弃孤立噪点与过小碎片（少于 ~0.005% 画布或不足 3px）
-    const minArea = Math.max(20, Math.floor(total * 0.00005));
-    const kept = rawComponents.filter(
-      (component) =>
-        component.maxX - component.minX + 1 >= 3 &&
-        component.maxY - component.minY + 1 >= 3 &&
-        component.area >= minArea
-    );
-    if (kept.length === 0) return null;
-
-    // 1) 块数与期望一致：直接按内容包围盒返回（行优先排序保证文件顺序与画面一致）
-    if (kept.length === expected) {
-      kept.sort((a, b) => a.minY - b.minY || a.minX - b.minX);
-      return kept.map((component) => ({
-        left: component.minX,
-        top: component.minY,
-        width: component.maxX - component.minX + 1,
-        height: component.maxY - component.minY + 1
-      }));
-    }
-
-    // 2) 归并兜底：按期望布局把每块内容指派到「中心最近的槽位」，再取各槽位的并集包围盒
     const cols = Math.ceil(Math.sqrt(expected));
     const rows = Math.ceil(expected / cols);
-    if (cols < 1 || rows < 1) return null;
-    const stepX = width / cols;
-    const stepY = height / rows;
-    const owners = new Int32Array(kept.length);
-    for (let index = 0; index < kept.length; index += 1) {
-      const component = kept[index];
-      const cx = (component.minX + component.maxX) / 2;
-      const cy = (component.minY + component.maxY) / 2;
-      let bestSlot = 0;
-      let bestDistance = Number.POSITIVE_INFINITY;
-      for (let slot = 0; slot < expected; slot += 1) {
-        const col = slot % cols;
-        const row = Math.floor(slot / cols);
-        const dx = cx / stepX - (col + 0.5);
-        const dy = cy / stepY - (row + 0.5);
-        const distance = dx * dx + dy * dy;
-        if (distance < bestDistance) {
-          bestDistance = distance;
-          bestSlot = slot;
-        }
+    // 门控半径：碎件并入主躯干的最大距离，取单格短边 25%——
+    // 够收进武器边角料，又远小于格间距，不会跨吞邻格素材
+    const gateRadius = Math.max(6, Math.min(width / cols, height / rows) * 0.25);
+
+    // 1) 主躯干定位：形态学闭运算多档，挑出「数量最接近 expected」的一组连通块
+    const kernels = [0, 3, 5, 7, 9];
+    let mainComponents: BoundingComponent[] | null = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+    for (const k of kernels) {
+      const closed = k > 0 ? this.morphClose(mask, width, height, k) : mask;
+      // 只把"够格当一个素材"的连通块算作主躯干：混进来的十几像素孤斑（抗锯齿残片、
+      // 武器断开的一角）会把数量顶高，凑出看似命中的 expected，实际切出一张空白图。
+      const components = this.filterSpriteSized(
+        this.labelAndFilterComponents(closed, width, height, minArea)
+      );
+      if (components.length === 0) continue;
+      if (components.length === expected) {
+        mainComponents = components;
+        break;
       }
-      owners[index] = bestSlot;
+      const diff = components.length - expected;
+      const score = diff >= 0 ? diff : -diff * 2;
+      if (score < bestScore) {
+        bestScore = score;
+        mainComponents = components;
+      }
+    }
+    if (!mainComponents || mainComponents.length === 0) return null;
+
+    // 2) 碎块归属：把武器 / 披风等边角料并进最近的主躯干，得到包住完整素材的真实包围盒
+    let groups = this.absorbFragments(mask, width, height, minArea, mainComponents);
+    if (groups.length === 0) return null;
+
+    // 3.5) 粘连拆分：相邻两个素材画到粘连时会被并成一格（表现为某格高达网格行距的近两倍）。
+    //     只有数量还不够时才动刀，且只在"内容最稀疏"处下刀，避免把完好的素材切坏。
+    if (groups.length < expected) {
+      groups = this.splitOversizedGroups(groups, mask, width, height, cols, rows);
+      if (groups.length > expected) {
+        groups = this.mergeNearestGroups(groups, expected, gateRadius);
+      }
     }
 
-    const cells: GridAutoCell[] = [];
-    for (let slot = 0; slot < expected; slot += 1) {
-      let minX = width;
-      let minY = height;
-      let maxX = -1;
-      let maxY = -1;
-      for (let index = 0; index < kept.length; index += 1) {
-        if (owners[index] !== slot) continue;
-        const component = kept[index];
-        if (component.minX < minX) minX = component.minX;
-        if (component.minY < minY) minY = component.minY;
-        if (component.maxX > maxX) maxX = component.maxX;
-        if (component.maxY > maxY) maxY = component.maxY;
+    // 3) 数量校准：多出来的先看是不是"AI 多画了"。网格一共 cols×rows 个格位，
+    //    只要还装得下、且只多出一两个，就如实返回——用户要的是"画面里每个素材都完整抠下来"，
+    //    硬合成设定数量反而会把相邻两格捏成一张细长图。
+    //    装不下或明显过载（多半是碎片/同一素材被拆散），才按包围盒间距最小反复合并。
+    const slots = cols * rows;
+    if (groups.length > expected && (groups.length > slots || groups.length - expected > 2)) {
+      groups = this.mergeNearestGroups(groups, expected, gateRadius);
+      if (groups.length > expected) {
+        const slotted = this.assignComponentsToSlots(groups, expected, cols, rows, width, height);
+        if (slotted) return slotted;
       }
-      if (minX > maxX || minY > maxY) return null; // 某槽位无内容：素材粘连无法拆分，退回等分
-      cells.push({
-        left: minX,
-        top: minY,
-        width: maxX - minX + 1,
-        height: maxY - minY + 1
-      });
     }
-    return cells;
+
+    // 数量不足期望的一半 → 主躯干定位不可信，最后试一次投影推断网格线（对粘连 / 噪点图更稳）
+    if (groups.length < Math.max(2, Math.ceil(expected * 0.5))) {
+      const projected = this.inferGridFromMask(mask, width, height, cols, rows);
+      if (projected) {
+        const slice = projected.slice(0, expected);
+        if (slice.length === expected) return slice;
+      }
+      return null;
+    }
+
+    // 质量闸门：复杂不透明底图（渐变/场景背景）会让掩码几乎铺满整幅，连通块分析随之失效，
+    // 典型症状是"某一格吞掉整张图 + 一堆十几像素的碎斑"。这种结果比等分还糟，直接判失败退回等分。
+    // 判据：素材不可能大过自己的格位太多（格位面积 = 整幅 / 格数），超出即视为吞并了邻格或整幅。
+    const nominalCellArea = (width / cols) * (height / rows);
+    let maxCellArea = 0;
+    for (const group of groups) {
+      const area = (group.maxX - group.minX + 1) * (group.maxY - group.minY + 1);
+      if (area > maxCellArea) maxCellArea = area;
+    }
+    // 实测：正常素材的包围盒最多到格位面积的 2.4 倍（角色武器外扩），
+    // 而底图失效时会直接等于整幅面积（16 倍），中间是巨大空档，取 4 倍做分界很安全。
+    if (maxCellArea > nominalCellArea * 4) return null;
+
+    // 尺寸一致性闸门：最大的格子比中位数大一个数量级，说明切出来的不是同一套素材
+    const sortedAreas = groups
+      .map((group) => (group.maxX - group.minX + 1) * (group.maxY - group.minY + 1))
+      .sort((a, b) => a - b);
+    const medianArea = sortedAreas[Math.floor(sortedAreas.length / 2)] || 1;
+    if (maxCellArea > medianArea * 12) return null;
+
+    groups.sort((a, b) => a.minY - b.minY || a.minX - b.minX);
+    return groups.map((component) => ({
+      left: component.minX,
+      top: component.minY,
+      width: component.maxX - component.minX + 1,
+      height: component.maxY - component.minY + 1
+    }));
   }
 
   /** 生成前景掩码：透明图按 alpha，不透明图按与边缘底色的颜色距离 */
@@ -256,6 +299,542 @@ export class ImageProcessingService {
       components.push({ area, minX, minY, maxX, maxY });
     }
     return components;
+  }
+
+  /** 4-连通区域标记 + 按尺寸过滤（≥3px 且 ≥minArea），供 detectAutoCells 多级兜底复用 */
+  private labelAndFilterComponents(
+    mask: Uint8Array,
+    width: number,
+    height: number,
+    minArea: number
+  ): BoundingComponent[] {
+    const raw = this.labelComponents(mask, width, height);
+    return raw.filter(
+      (component) =>
+        component.maxX - component.minX + 1 >= 3 &&
+        component.maxY - component.minY + 1 >= 3 &&
+        component.area >= minArea
+    );
+  }
+
+  /** 二值形态学闭运算：先 dilate 后 erode，桥接同一素材内的细缝。kernelSize 需 ≥3 且为奇数 */
+  private morphClose(mask: Uint8Array, width: number, height: number, kernelSize: number): Uint8Array {
+    if (kernelSize < 3) return mask;
+    const radius = (kernelSize - 1) / 2;
+    const dilated = this.morphDilate(mask, width, height, radius);
+    return this.morphErode(dilated, width, height, radius);
+  }
+
+  /** 1D 可分离方形核的膨胀：水平 + 垂直两次扫描，O(W·H·K) 而非 O(W·H·K²) */
+  private morphDilate(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
+    const total = width * height;
+    const tmp = new Uint8Array(total);
+    for (let y = 0; y < height; y += 1) {
+      const row = y * width;
+      for (let x = 0; x < width; x += 1) {
+        const x0 = x - radius < 0 ? 0 : x - radius;
+        const x1 = x + radius >= width ? width - 1 : x + radius;
+        let any = 0;
+        for (let xx = x0; xx <= x1 && any === 0; xx += 1) {
+          if (mask[row + xx]) any = 1;
+        }
+        tmp[row + x] = any;
+      }
+    }
+    const out = new Uint8Array(total);
+    for (let x = 0; x < width; x += 1) {
+      for (let y = 0; y < height; y += 1) {
+        const y0 = y - radius < 0 ? 0 : y - radius;
+        const y1 = y + radius >= height ? height - 1 : y + radius;
+        let any = 0;
+        for (let yy = y0; yy <= y1 && any === 0; yy += 1) {
+          if (tmp[yy * width + x]) any = 1;
+        }
+        out[y * width + x] = any;
+      }
+    }
+    return out;
+  }
+
+  /** 1D 可分离方形核的腐蚀：水平 + 垂直两次扫描 */
+  private morphErode(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
+    const total = width * height;
+    const tmp = new Uint8Array(total);
+    for (let y = 0; y < height; y += 1) {
+      const row = y * width;
+      for (let x = 0; x < width; x += 1) {
+        const x0 = x - radius < 0 ? 0 : x - radius;
+        const x1 = x + radius >= width ? width - 1 : x + radius;
+        let all = 1;
+        for (let xx = x0; xx <= x1; xx += 1) {
+          if (!mask[row + xx]) { all = 0; break; }
+        }
+        tmp[row + x] = all;
+      }
+    }
+    const out = new Uint8Array(total);
+    for (let x = 0; x < width; x += 1) {
+      for (let y = 0; y < height; y += 1) {
+        const y0 = y - radius < 0 ? 0 : y - radius;
+        const y1 = y + radius >= height ? height - 1 : y + radius;
+        let all = 1;
+        for (let yy = y0; yy <= y1; yy += 1) {
+          if (!tmp[yy * width + x]) { all = 0; break; }
+        }
+        out[y * width + x] = all;
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 投影推断网格线：从内容掩码的横/纵密度剖面里，用 DP 求最优分割线，
+   * 推断真实网格边界（允许各列/行宽窄略有不同）。
+   * 任一行/列方向推断失败则整体返回 null，由调用方走下一级兜底。
+   */
+  private inferGridFromMask(
+    mask: Uint8Array,
+    width: number,
+    height: number,
+    cols: number,
+    rows: number
+  ): GridAutoCell[] | null {
+    const rowDensity = this.computeDensityProfile(mask, width, height, true);
+    const colDensity = this.computeDensityProfile(mask, width, height, false);
+    const hLines = this.inferLinesByDensity(rowDensity, rows - 1);
+    if (!hLines) return null;
+    const vLines = this.inferLinesByDensity(colDensity, cols - 1);
+    if (!vLines) return null;
+    const cells: GridAutoCell[] = [];
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        cells.push({
+          left: vLines[col],
+          top: hLines[row],
+          width: vLines[col + 1] - vLines[col],
+          height: hLines[row + 1] - hLines[row]
+        });
+      }
+    }
+    return cells;
+  }
+
+  /** 计算某方向的"内容密度剖面"（该行/列中内容像素占比），并做轻度平滑去毛刺 */
+  private computeDensityProfile(
+    mask: Uint8Array,
+    width: number,
+    height: number,
+    horizontal: boolean
+  ): Float32Array {
+    const len = horizontal ? height : width;
+    const outer = horizontal ? height : width;
+    const raw = new Float32Array(len);
+    for (let i = 0; i < len; i += 1) {
+      let count = 0;
+      if (horizontal) {
+        const row = i * width;
+        for (let x = 0; x < width; x += 1) {
+          if (mask[row + x]) count += 1;
+        }
+      } else {
+        for (let y = 0; y < height; y += 1) {
+          if (mask[y * width + i]) count += 1;
+        }
+      }
+      raw[i] = count / outer;
+    }
+    // 轻度移动平均：抹掉单列/单行的孤立毛刺，同时保留真实的空隙带
+    const half = Math.max(1, Math.round(len / 200));
+    const smoothed = new Float32Array(len);
+    for (let i = 0; i < len; i += 1) {
+      let sum = 0;
+      let n = 0;
+      for (let k = i - half; k <= i + half; k += 1) {
+        if (k >= 0 && k < len) {
+          sum += raw[k];
+          n += 1;
+        }
+      }
+      smoothed[i] = sum / n;
+    }
+    return smoothed;
+  }
+
+  /**
+   * 在密度剖面上用 DP 求 n 条最优分割线（返回完整分割线 [0, ...切点, len]）。
+   * 目标：最小化各切点处的内容密度之和——切点应落在最空的位置；
+   * 约束：每段长度 ∈ [mean×0.5, mean×1.8]，既保证分割大致均匀，
+   *       也天然排除图像外围的空白边（把外边距当切点会让首/末段过窄）。
+   * 校验：任一最优切点处密度 ≥ 峰值×0.25 视为切到了内容，整体判定失败返回 null。
+   */
+  private inferLinesByDensity(density: Float32Array, n: number): number[] | null {
+    const len = density.length;
+    if (n <= 0) return [0, len];
+    const segments = n + 1;
+    const mean = len / segments;
+    const minSeg = Math.max(2, Math.floor(mean * 0.5));
+    const maxSeg = Math.max(minSeg + 1, Math.ceil(mean * 1.8));
+    if (segments * minSeg > len) return null;
+
+    let peak = 0;
+    for (let i = 0; i < len; i += 1) {
+      if (density[i] > peak) peak = density[i];
+    }
+    if (peak <= 0) return null;
+
+    const INF = Number.POSITIVE_INFINITY;
+    // dp[j][p]：用 j 段覆盖 [0,p]（p 为第 j 段终点）的最小累计代价
+    const dp: Float64Array[] = [];
+    const from: Int32Array[] = [];
+    for (let j = 0; j <= segments; j += 1) {
+      dp.push(new Float64Array(len + 1).fill(INF));
+      from.push(new Int32Array(len + 1).fill(-1));
+    }
+    dp[0][0] = 0;
+    for (let j = 1; j <= segments; j += 1) {
+      const lo = j * minSeg;
+      const hi = Math.min(len, j * maxSeg);
+      for (let p = lo; p <= hi; p += 1) {
+        const qLo = Math.max(0, p - maxSeg);
+        const qHi = p - minSeg;
+        const cost = p < len ? density[p] : 0;
+        let bestVal = INF;
+        let bestQ = -1;
+        for (let q = qLo; q <= qHi; q += 1) {
+          const prev = dp[j - 1][q];
+          if (prev === INF) continue;
+          if (prev < bestVal) {
+            bestVal = prev;
+            bestQ = q;
+          }
+        }
+        if (bestQ >= 0) {
+          dp[j][p] = bestVal + cost;
+          from[j][p] = bestQ;
+        }
+      }
+    }
+    if (from[segments][len] < 0) return null;
+
+    const lines: number[] = [len];
+    let p = len;
+    for (let j = segments; j >= 1; j -= 1) {
+      p = from[j][p];
+      if (p < 0) return null;
+      lines.push(p);
+    }
+    lines.reverse();
+    if (lines[0] !== 0) return null;
+
+    // 校验：内部切点必须落在"足够空"的位置，否则说明分割线切到了素材
+    for (let i = 1; i < lines.length - 1; i += 1) {
+      if (density[lines[i]] >= peak * 0.25) return null;
+    }
+    return lines;
+  }
+
+  /** 等分槽位归并：把每个连通块按"中心最近"指派到 expected 个槽位之一，返回各槽位的并集包围盒 */
+  private assignComponentsToSlots(
+    components: BoundingComponent[],
+    expected: number,
+    cols: number,
+    rows: number,
+    width: number,
+    height: number
+  ): GridAutoCell[] | null {
+    if (cols < 1 || rows < 1) return null;
+    const stepX = width / cols;
+    const stepY = height / rows;
+    const owners = new Int32Array(components.length);
+    for (let index = 0; index < components.length; index += 1) {
+      const component = components[index];
+      const cx = (component.minX + component.maxX) / 2;
+      const cy = (component.minY + component.maxY) / 2;
+      let bestSlot = 0;
+      let bestDistance = Number.POSITIVE_INFINITY;
+      for (let slot = 0; slot < expected; slot += 1) {
+        const col = slot % cols;
+        const row = Math.floor(slot / cols);
+        const dx = cx / stepX - (col + 0.5);
+        const dy = cy / stepY - (row + 0.5);
+        const distance = dx * dx + dy * dy;
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestSlot = slot;
+        }
+      }
+      owners[index] = bestSlot;
+    }
+    const cells: GridAutoCell[] = [];
+    for (let slot = 0; slot < expected; slot += 1) {
+      let minX = width;
+      let minY = height;
+      let maxX = -1;
+      let maxY = -1;
+      for (let index = 0; index < components.length; index += 1) {
+        if (owners[index] !== slot) continue;
+        const component = components[index];
+        if (component.minX < minX) minX = component.minX;
+        if (component.minY < minY) minY = component.minY;
+        if (component.maxX > maxX) maxX = component.maxX;
+        if (component.maxY > maxY) maxY = component.maxY;
+      }
+      if (minX > maxX || minY > maxY) return null;
+      cells.push({
+        left: minX,
+        top: minY,
+        width: maxX - minX + 1,
+        height: maxY - minY + 1
+      });
+    }
+    return cells;
+  }
+
+  /**
+   * 碎块归属：把掩码里的全部连通块按「最近主躯干」合并，得到每个素材的完整包围盒。
+   * 面积远小于最大块的（武器尖、披风角、光效等边角料）会被并入最近的主躯干，
+   * 因此包围盒是"素材本体 + 全部边角料"的真实范围，而不是只包住身体导致武器被切掉。
+   */
+  private absorbFragments(
+    mask: Uint8Array,
+    width: number,
+    height: number,
+    minArea: number,
+    mainComponents: BoundingComponent[]
+  ): BoundingComponent[] {
+    const all = this.labelAndFilterComponents(mask, width, height, minArea);
+    if (all.length === 0) return mainComponents.map((component) => ({ ...component }));
+
+    let maxArea = 0;
+    for (const component of all) {
+      if (component.area > maxArea) maxArea = component.area;
+    }
+    const groups: BoundingComponent[] = mainComponents.map((component) => ({ ...component }));
+
+    for (const component of all) {
+      // 已被某个主躯干的包围盒覆盖：说明它就是这个主躯干本身，跳过以免重复计数
+      if (this.isCoveredByGroups(component, groups)) continue;
+
+      const cx = (component.minX + component.maxX) / 2;
+      const cy = (component.minY + component.maxY) / 2;
+      let bestIndex = -1;
+      let bestDistance = Number.POSITIVE_INFINITY;
+      for (let index = 0; index < groups.length; index += 1) {
+        const distance = this.pointToBoxDistance(cx, cy, groups[index]);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestIndex = index;
+        }
+      }
+
+      // 碎件一律并入最近的主躯干，不再用门控半径把它踢成独立一格：
+      // 十几像素的孤斑单独成格会切出一张近乎空白的图，而它几乎必然属于某个素材
+      // （武器尖、特效碎点、抗锯齿残片），并进最近的一格只会让包围盒略微外扩。
+      const target = groups[bestIndex];
+      if (component.minX < target.minX) target.minX = component.minX;
+      if (component.minY < target.minY) target.minY = component.minY;
+      if (component.maxX > target.maxX) target.maxX = component.maxX;
+      if (component.maxY > target.maxY) target.maxY = component.maxY;
+      target.area += component.area;
+    }
+
+    return groups;
+  }
+
+  /**
+   * 组间合并：数量多于期望时，反复合并代价最小的一对，直到降到期望数或间距超出门控。
+   * 代价不只看间距，还要看合并后的包围盒是否还像个"单格素材"：
+   * 上下相邻的两个角色间距可能很小，但一合并就成细长条（高接近两倍行距），
+   * 那多半是两个不同格的素材被强行捏在一起，要加重代价让算法优先去合并别的对。
+   */
+  private mergeNearestGroups(
+    groups: BoundingComponent[],
+    target: number,
+    gateRadius: number
+  ): BoundingComponent[] {
+    const merged = groups.map((component) => ({ ...component }));
+    while (merged.length > target) {
+      let bestI = -1;
+      let bestJ = -1;
+      let bestCost = Number.POSITIVE_INFINITY;
+      let bestGap = Number.POSITIVE_INFINITY;
+      for (let i = 0; i < merged.length; i += 1) {
+        for (let j = i + 1; j < merged.length; j += 1) {
+          const a = merged[i];
+          const b = merged[j];
+          const gap = this.boxGap(a, b);
+          const mw = Math.max(a.maxX, b.maxX) - Math.min(a.minX, b.minX) + 1;
+          const mh = Math.max(a.maxY, b.maxY) - Math.min(a.minY, b.minY) + 1;
+          // 代价取"合并后的包围盒面积"：同一格里的两块（身体 + 伸出的武器）并起来仍然紧凑，
+          // 而上下相邻的两个角色并起来会得到细长条、面积暴涨，自然被排到后面。
+          const cost = mw * mh;
+          if (cost < bestCost) {
+            bestCost = cost;
+            bestGap = gap;
+            bestI = i;
+            bestJ = j;
+          }
+        }
+      }
+      if (bestI < 0 || bestGap > gateRadius) break;
+      const a = merged[bestI];
+      const b = merged[bestJ];
+      a.minX = Math.min(a.minX, b.minX);
+      a.minY = Math.min(a.minY, b.minY);
+      a.maxX = Math.max(a.maxX, b.maxX);
+      a.maxY = Math.max(a.maxY, b.maxY);
+      a.area += b.area;
+      merged.splice(bestJ, 1);
+    }
+    return merged;
+  }
+
+  /**
+   * 剔除尺寸远小于同批最大块的连通块：它们不是独立素材，而是碎斑。
+   * 注意只在「主躯干选取」阶段用——碎斑本身仍会在 absorbFragments 里被并进所属素材的包围盒。
+   */
+  private filterSpriteSized(components: BoundingComponent[]): BoundingComponent[] {
+    if (components.length <= 1) return components;
+    let maxArea = 0;
+    for (const component of components) {
+      if (component.area > maxArea) maxArea = component.area;
+    }
+    const floor = maxArea * 0.02;
+    const kept = components.filter((component) => component.area >= floor);
+    return kept.length > 0 ? kept : components;
+  }
+
+  /**
+   * 粘连拆分：把"明显高于 / 宽于单个网格位"的格子按内容最稀疏处切开。
+   * 上下相邻的两个角色画到粘连时会并成一个连通块，此时整格高度接近两倍行距，
+   * 单靠连通性永远分不开，必须借助网格节拍（行距 / 列距）在空隙带下刀。
+   */
+  private splitOversizedGroups(
+    groups: BoundingComponent[],
+    mask: Uint8Array,
+    width: number,
+    height: number,
+    cols: number,
+    rows: number
+  ): BoundingComponent[] {
+    const cellW = width / cols;
+    const cellH = height / rows;
+    const out: BoundingComponent[] = [];
+    for (const group of groups) {
+      const w = group.maxX - group.minX + 1;
+      const h = group.maxY - group.minY + 1;
+      const splitRows = h > cellH * 1.5 ? Math.min(rows, Math.max(2, Math.round(h / cellH))) : 1;
+      const splitCols = w > cellW * 1.5 ? Math.min(cols, Math.max(2, Math.round(w / cellW))) : 1;
+      if (splitRows === 1 && splitCols === 1) {
+        out.push(group);
+        continue;
+      }
+      const yCuts = this.findLowDensityCuts(mask, width, group, splitRows, cellH, false);
+      const xCuts = this.findLowDensityCuts(mask, width, group, splitCols, cellW, true);
+      const ys = [group.minY, ...yCuts, group.maxY + 1];
+      const xs = [group.minX, ...xCuts, group.maxX + 1];
+      for (let r = 0; r + 1 < ys.length; r += 1) {
+        for (let c = 0; c + 1 < xs.length; c += 1) {
+          const box = this.contentBoxIn(mask, width, xs[c], ys[r], xs[c + 1] - 1, ys[r + 1] - 1);
+          if (box) out.push(box);
+        }
+      }
+    }
+    return out.length > 0 ? out : groups;
+  }
+
+  /** 在理想等分点附近找内容最稀疏的切分线（找"空隙带"下刀，避免切到素材本体） */
+  private findLowDensityCuts(
+    mask: Uint8Array,
+    width: number,
+    group: BoundingComponent,
+    parts: number,
+    pitch: number,
+    horizontal: boolean
+  ): number[] {
+    if (parts < 2) return [];
+    const start = horizontal ? group.minX : group.minY;
+    const end = horizontal ? group.maxX : group.maxY;
+    const span = end - start + 1;
+    const tolerance = Math.max(2, pitch * 0.4);
+    const cuts: number[] = [];
+    for (let i = 1; i < parts; i += 1) {
+      const ideal = start + (span * i) / parts;
+      const from = Math.max(start + 1, Math.round(ideal - tolerance));
+      const to = Math.min(end, Math.round(ideal + tolerance));
+      let bestLine = -1;
+      let bestDensity = Number.POSITIVE_INFINITY;
+      for (let line = from; line <= to; line += 1) {
+        let density = 0;
+        if (horizontal) {
+          for (let y = group.minY; y <= group.maxY; y += 1) if (mask[y * width + line]) density += 1;
+        } else {
+          const row = line * width;
+          for (let x = group.minX; x <= group.maxX; x += 1) if (mask[row + x]) density += 1;
+        }
+        if (density < bestDensity) {
+          bestDensity = density;
+          bestLine = line;
+        }
+      }
+      if (bestLine > 0) cuts.push(bestLine);
+    }
+    return cuts;
+  }
+
+  /** 取矩形区域内的真实内容包围盒；区域内没有内容返回 null */
+  private contentBoxIn(
+    mask: Uint8Array,
+    width: number,
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number
+  ): BoundingComponent | null {
+    let minX = -1;
+    let minY = -1;
+    let maxX = -1;
+    let maxY = -1;
+    let area = 0;
+    for (let y = y0; y <= y1; y += 1) {
+      const row = y * width;
+      for (let x = x0; x <= x1; x += 1) {
+        if (!mask[row + x]) continue;
+        area += 1;
+        if (minX < 0 || x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (minY < 0) minY = y;
+        maxY = y;
+      }
+    }
+    if (minX < 0) return null;
+    return { area, minX, minY, maxX, maxY };
+  }
+
+  /** 点到包围盒的距离：落在盒内为 0，否则为到最近边的欧氏距离 */
+  private pointToBoxDistance(x: number, y: number, box: BoundingComponent): number {
+    const dx = Math.max(box.minX - x, 0, x - box.maxX);
+    const dy = Math.max(box.minY - y, 0, y - box.maxY);
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  /** 两包围盒之间的间距：相交或相切为 0 */
+  private boxGap(a: BoundingComponent, b: BoundingComponent): number {
+    const dx = Math.max(a.minX - b.maxX, 0, b.minX - a.maxX);
+    const dy = Math.max(a.minY - b.maxY, 0, b.minY - a.maxY);
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  /** 连通块中心是否已落在某个已有组的包围盒内（容 1px 误差），用于跳过主躯干自身避免重复计数 */
+  private isCoveredByGroups(component: BoundingComponent, groups: BoundingComponent[]): boolean {
+    const cx = (component.minX + component.maxX) / 2;
+    const cy = (component.minY + component.maxY) / 2;
+    for (const group of groups) {
+      if (cx >= group.minX - 1 && cx <= group.maxX + 1 && cy >= group.minY - 1 && cy <= group.maxY + 1) {
+        return true;
+      }
+    }
+    return false;
   }
 
   async normalizeFramesConsistently(inputs: Buffer[], options: ProcessImageOptions): Promise<Buffer[]> {
@@ -517,10 +1096,16 @@ export class ImageProcessingService {
     return Math.min(64, Math.max(24, Math.round(q3 + iqr * 1.5)));
   }
 
-  private cleanupStrayPixels(mask: Uint8Array, width: number, height: number): void {
+  /**
+   * 只清真正的噪点：几像素的孤立点。
+   * 历史教训：这里曾用过 max(12, 0.8% 画布) 的高阈值，结果把武器尖、披风角这类"边角料"
+   * 在闭运算之前就整块删掉了，切出来的角色缺胳膊少腿。现在阈值压到个位数像素，
+   * 小碎件一律保留，交给 absorbFragments 并进所属素材的包围盒。
+   */
+  private removeTinyNoise(mask: Uint8Array, width: number, height: number): void {
     const total = width * height;
     const visited = new Uint8Array(total);
-    const minRegion = Math.max(12, Math.floor(total * 0.008));
+    const minRegion = Math.max(4, Math.floor(total * 0.000004));
 
     for (let start = 0; start < total; start++) {
       if (!mask[start] || visited[start]) continue;

@@ -25,17 +25,6 @@ export function sanitizeFileName(value: string): string {
   return cleaned || "asset";
 }
 
-export function parseSize(size: string): { width: number; height: number } {
-  const match = size.match(/(\d+)\s*x\s*(\d+)/i);
-  if (!match) {
-    return { width: 64, height: 64 };
-  }
-
-  return {
-    width: Number(match[1]),
-    height: Number(match[2])
-  };
-}
 
 export function toRelative(projectPath: string, filePath: string): string {
   return path.relative(projectPath, filePath).replace(/\\/g, "/");

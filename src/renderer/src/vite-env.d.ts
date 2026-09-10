@@ -40,6 +40,11 @@ declare global {
         draft: GridDraft,
         options: GridSliceOptions
       ): Promise<IpcResponse<GeneratedAssetResult>>;
+      detectAutoCells(
+        projectPath: string,
+        gridImagePath: string,
+        count: number
+      ): Promise<IpcResponse<GridAutoCell[] | null>>;
       copyPng(projectPath: string): Promise<IpcResponse<string>>;
       listGenerationHistory(projectPath: string): Promise<IpcResponse<GenerationHistoryEntry[]>>;
       removeGenerationHistory(projectPath: string, runId: string): Promise<IpcResponse<boolean>>;

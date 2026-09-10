@@ -26,9 +26,7 @@ import type {
   AppSettings,
   Asset,
   AssetType,
-  CreateProjectInput,
   GenerateAssetInput,
-  GeneratedAssetResult,
   GenerationHistoryEntry,
   GenerationQuality,
   GridDraft,
@@ -46,14 +44,16 @@ type Page = "home" | "generate" | "assets" | "settings";
 type DetailTemplate = { id: string; name: string; prompt: string; meta: string };
 type ReferenceDraft = ReferenceImageInput & Partial<Pick<ImportedReferenceImage, "width" | "height" | "bytes" | "hash" | "thumbnailPath" | "dataUrl">>;
 type SelectOption = string | { value: string; label: string };
+// label 一律用 i18n key（其它选项数组同款写法），value 保持原值不动——value 是要传给 AI 的，
+// 改了会改变生成结果、也会让历史里的旧值匹配不上。
 const gameTypeOptions: SelectOption[] = [
-  { value: "RPG", label: "角色扮演" },
-  "平台跳跃",
-  "俯视角",
-  "横版动作",
-  "卡牌",
-  "塔防",
-  "其他"
+  { value: "RPG", label: "gameType.rpg" },
+  { value: "平台跳跃", label: "gameType.platform" },
+  { value: "俯视角", label: "gameType.topdown" },
+  { value: "横版动作", label: "gameType.sideScroll" },
+  { value: "卡牌", label: "gameType.card" },
+  { value: "塔防", label: "gameType.towerDefense" },
+  { value: "其他", label: "gameType.other" }
 ];
 const stylePresets: Array<{ value: string; label: string; text: string }> = [
   { value: "pixel", label: "generate.style.pixel", text: "Pixel art: crisp hard pixel edges, clean readable silhouette, restrained color palette, no blur, no soft gradients." },
@@ -113,11 +113,10 @@ const referenceRoles: Array<{ value: ReferenceImageRole; label: string }> = [
   { value: "palette", label: "role.palette" }
 ];
 const referenceStrengthOptions: Array<{ value: ReferenceStrength; label: string }> = [
-  { value: "low", label: "低" },
-  { value: "medium", label: "中" },
-  { value: "high", label: "高" }
+  { value: "low", label: "strength.low" },
+  { value: "medium", label: "strength.medium" },
+  { value: "high", label: "strength.high" }
 ];
-const referenceStrengthLabels = Object.fromEntries(referenceStrengthOptions.map((option) => [option.value, option.label])) as Record<ReferenceStrength, string>;
 const assetTypes: Array<{ value: AssetType; label: string }> = [
   { value: "character", label: "assetType.character" },
   { value: "enemy", label: "assetType.enemy" },
@@ -280,18 +279,6 @@ function App(): JSX.Element {
     return nextProject;
   }
 
-  async function refreshHomeProjects(): Promise<void> {
-    try {
-      const bridge = window.topspeedBuilder;
-      if (bridge && typeof bridge.listDiscoverableProjects === "function") {
-        setHomeProjects(await unwrap(bridge.listDiscoverableProjects()));
-      }
-    } catch (error) {
-      // 静默失败：仅刷新失败时忽略
-      void error;
-    }
-  }
-
   // ---- 全局生成历史：刷新 / 载入 / 删除 ----
   async function refreshHistory(projectPath = project?.path): Promise<void> {
     const bridge = window.topspeedBuilder;
@@ -420,7 +407,7 @@ function App(): JSX.Element {
         />
 
         <div className="projectDock">
-          <span>当前项目</span>
+          <span>{t("project.dock.label")}</span>
           <strong>{project?.name ?? t("project.dock.empty")}</strong>
           <small>{project?.path ?? t("project.dock.hint")}</small>
         </div>
@@ -703,6 +690,10 @@ function GeneratePage(props: {
   const autoAlignSupported = !isSingleShot;
   const autoActive = autoAlignSupported && autoAlign;
   const autoPreviewCells = autoActive && draft?.autoCells && draft.autoCells.length > 0 ? draft.autoCells : null;
+  // 画面实际素材数可能与设定值不符（例如设定 16 实为 15，或设定 8 画了 9），提示要如实反映
+  const autoExpectedCount = draft?.count ?? 0;
+  // > 0 多画了，< 0 少画了
+  const autoCountDiff = autoPreviewCells && autoExpectedCount > 0 ? autoPreviewCells.length - autoExpectedCount : 0;
   const styleOptions = useMemo<SelectOption[]>(
     () => [...stylePresetOptions, { value: styleCustomValue, label: "generate.style.custom" }],
     []
@@ -963,6 +954,17 @@ function GeneratePage(props: {
         logs: entry.logs || [],
         autoCells: restoredAutoCells
       });
+      // 载入历史后立刻用当前算法对这张已有大图重新检测一次：历史里存的是入库当时的结果，
+      // 算法升级后可能已不准确；而切分时 commitSlice 一定会重算，预览必须与它一致，
+      // 否则会出现"绿框是旧的、切出来是新的"。无需重新生成大图。
+      void window.topspeedBuilder
+        .detectAutoCells(props.project.path, entry.grid.gridImagePath, entry.grid.count)
+        .then((result) => {
+          if (!result.ok) return;
+          const cells = result.data && result.data.length > 0 ? result.data : undefined;
+          setDraft((current) => (current && current.runId === entry.runId ? { ...current, autoCells: cells } : current));
+        })
+        .catch(() => undefined);
     } else {
       // 「仅配置」快照：只回填参数，锚定该记录（再点保存 = 原地更新），提示用户可继续生成
       setDraft(null);
@@ -1215,7 +1217,17 @@ function GeneratePage(props: {
                 </div>
                 {autoPreviewCells ? (
                   <div className="inlineNote compactNote">
-                    {t("generate.autoDetected", { count: autoPreviewCells.length })}
+                    {autoCountDiff < 0
+                      ? t("generate.autoDetectedPartial", {
+                          count: autoPreviewCells.length,
+                          expected: autoExpectedCount
+                        })
+                      : autoCountDiff > 0
+                        ? t("generate.autoDetectedExtra", {
+                            count: autoPreviewCells.length,
+                            expected: autoExpectedCount
+                          })
+                        : t("generate.autoDetected", { count: autoPreviewCells.length })}
                   </div>
                 ) : autoActive ? (
                   <div className="inlineNote compactNote">{t("generate.autoFallback")}</div>
@@ -1612,7 +1624,7 @@ function ReferenceImagePanel(props: {
             >
               {referenceStrengthOptions.map((option) => (
                 <option key={selectOptionValue(option)} value={selectOptionValue(option)}>
-                  {selectOptionLabel(option)}
+                  {t(selectOptionLabel(option))}
                 </option>
               ))}
             </select>
@@ -1647,7 +1659,7 @@ function ReferenceImagePanel(props: {
               <button
                 className="referenceRemove"
                 type="button"
-                title="移除参考图"
+                title={t("generate.removeRef")}
                 onClick={() => props.onChange(props.value.filter((item) => item.path !== image.path))}
               >
                 <Trash2 size={13} />
@@ -1924,11 +1936,6 @@ function DirectoryPicker(props: {
       </button>
     </div>
   );
-}
-
-function selectPreviewFile(asset: Asset): string {
-  const pngFiles = asset.files.filter((file) => file.toLowerCase().endsWith(".png"));
-  return pngFiles[0] ?? asset.files[0] ?? "";
 }
 
 function AssetCard(props: {
@@ -2208,112 +2215,6 @@ function BufferedTextArea(props: {
   );
 }
 
-/**
- * 本地缓冲数字输入：文本型输入（inputMode=numeric，无原生 number 输入框的怪癖），
- * 仅在“停在合法区间内”或“失焦”时提交并夹取到 [min, max]，保证边删边打不跳字。
- */
-function BufferedNumberField(props: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  className?: string;
-  onChange: (value: number) => void;
-  flushDelay?: number;
-}): JSX.Element {
-  const flushDelay = props.flushDelay ?? 240;
-  const [text, setText] = useState(String(props.value));
-  const propsRef = useRef(props);
-  propsRef.current = props;
-  const textRef = useRef(text);
-  textRef.current = text;
-  const lastEditRef = useRef(0);
-  const timerRef = useRef<number | undefined>(undefined);
-
-  const clearTimer = (): void => {
-    if (timerRef.current !== undefined) {
-      window.clearTimeout(timerRef.current);
-      timerRef.current = undefined;
-    }
-  };
-
-  const clamp = (num: number): number =>
-    Math.min(propsRef.current.max, Math.max(propsRef.current.min, Math.round(num)));
-
-  // 仅在合法区间内提交；非法中间态（如宽高输入 “1” 尚未凑成 1024）保持本地输入不打断
-  const tryCommit = (): void => {
-    const raw = textRef.current.trim();
-    if (raw === "") return;
-    const num = Number(raw);
-    if (!Number.isFinite(num)) return;
-    const { min, max, value, onChange } = propsRef.current;
-    if (num < min || num > max) return;
-    const rounded = Math.round(num);
-    if (rounded !== value) onChange(rounded);
-    const normalized = String(rounded);
-    if (normalized !== raw) setText(normalized);
-  };
-
-  // 失焦强制提交并夹取到合法区间（空值回到最小值）
-  const commitOnBlur = (): void => {
-    clearTimer();
-    const raw = textRef.current.trim();
-    const { min, value, onChange } = propsRef.current;
-    if (raw === "") {
-      if (value !== min) onChange(min);
-      setText(String(min));
-      return;
-    }
-    const num = Number(raw);
-    const target = Number.isFinite(num) ? clamp(num) : value;
-    if (target !== value) onChange(target);
-    if (String(target) !== raw) setText(String(target));
-  };
-
-  // 外部值变化且用户空闲 → 采纳
-  useEffect(() => {
-    const expected = String(props.value);
-    if (expected === text) return;
-    if (Date.now() - lastEditRef.current < 500) return;
-    clearTimer();
-    setText(expected);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.value]);
-
-  // 卸载前尽力提交有效输入
-  useEffect(
-    () => () => {
-      clearTimer();
-      const raw = textRef.current.trim();
-      if (raw === "") return;
-      const num = Number(raw);
-      if (!Number.isFinite(num)) return;
-      const target = clamp(num);
-      if (target !== propsRef.current.value) propsRef.current.onChange(target);
-    },
-    []
-  );
-
-  return (
-    <label className={["field", props.className].filter(Boolean).join(" ")}>
-      <span>{props.label}</span>
-      <input
-        type="text"
-        inputMode="numeric"
-        value={text}
-        onBlur={commitOnBlur}
-        onChange={(event) => {
-          const next = event.target.value.replace(/\D/g, "");
-          setText(next);
-          lastEditRef.current = Date.now();
-          clearTimer();
-          timerRef.current = window.setTimeout(tryCommit, flushDelay);
-        }}
-      />
-    </label>
-  );
-}
-
 function SelectInput(props: {
   label: string;
   value: string;
@@ -2356,10 +2257,6 @@ function DeckToggle(props: {
       </button>
     </label>
   );
-}
-
-function Pill(props: { children: string }): JSX.Element {
-  return <span className="pill">{props.children}</span>;
 }
 
 function EmptyState(props: { text: string }): JSX.Element {
@@ -2432,10 +2329,6 @@ function assetTypeLabel(assetType: AssetType): string {
   return found ? found.label : assetType;
 }
 
-function gameTypeLabel(gameType: string): string {
-  const found = gameTypeOptions.find((option) => selectOptionValue(option) === gameType);
-  return found ? selectOptionLabel(found) : gameType;
-}
 function gameTypeLabelT(t: (key: string) => string, gameType: string): string {
   const found = gameTypeOptions.find((option) => selectOptionValue(option) === gameType);
   return found ? t(selectOptionLabel(found)) : gameType;

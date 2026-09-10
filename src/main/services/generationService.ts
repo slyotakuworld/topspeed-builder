@@ -20,7 +20,7 @@ import { GenerationHistoryService } from "./generationHistoryService";
 import { ImageProcessingService } from "./imageService";
 import { ProjectService } from "./projectService";
 import { SettingsService } from "./settingsService";
-import { nowIso, parseSize, resolveProjectPath, sanitizeFileName, toRelative, writeJsonFile } from "./utils";
+import { nowIso, resolveProjectPath, sanitizeFileName, toRelative, writeJsonFile } from "./utils";
 
 interface ResolvedReferenceImage extends ReferenceImageInput {
   filePath: string;
@@ -83,9 +83,13 @@ export class GenerationService {
     if (count > 1) {
       autoCells = (await this.imageService.detectAutoCells(gridBuffer, count)) ?? undefined;
       logs.push(
-        autoCells
-          ? `内容感知切分：检测到 ${autoCells.length} 个素材的实际位置，切分将按内容边界对齐而非等分。`
-          : "内容感知切分：未能在图中稳定分离出每个素材（间距过小、边缘粘连或底色不均），切分将退回等分网格。"
+        !autoCells || autoCells.length === 0
+          ? "内容感知切分：未能在图中稳定分离出每个素材（间距过小、边缘粘连或底色不均），切分将退回等分网格。"
+          : autoCells.length === count
+            ? `内容感知切分：检测到 ${count} 个素材的实际位置，切分将按内容边界对齐而非等分。`
+            : autoCells.length < count
+              ? `内容感知切分：画面实际只有 ${autoCells.length} 个素材（设定 ${count} 个，少 ${count - autoCells.length} 个），将按实际数量切分且不补空槽。`
+              : `内容感知切分：画面实际有 ${autoCells.length} 个素材（设定 ${count} 个，多 ${autoCells.length - count} 个），将按画面实际数量切分。`
       );
     }
 
@@ -161,10 +165,22 @@ export class GenerationService {
     let lastRowCols = cols;
     let equalMode = false;
 
-    if (autoCells) {
-      sliceCount = count;
+    if (autoCells && autoCells.length > 0) {
+      // 按实际检测到的数量切：画面只画了 15 个（设定 16）就切 15 个，绝不拿 count 去补空槽——
+      // 否则最后一格会切到越界的 undefined 或一段空白，也就是过去"第 16 张是空图"的来源。
+      sliceCount = autoCells.length;
       cutBoxes = autoCells;
-      logs.push(`内容感知切分：检测到 ${autoCells.length} 个素材的实际位置，按内容边界切割（忽略等分网格）。`);
+      if (sliceCount === count) {
+        logs.push(`内容感知切分：检测到 ${sliceCount} 个素材的实际位置，按内容边界切割（忽略等分网格）。`);
+      } else if (sliceCount < count) {
+        logs.push(
+          `内容感知切分：画面实际只检测到 ${sliceCount} 个素材（设定 ${count} 个，少 ${count - sliceCount} 个），已按实际数量切割且未补空槽；如需 ${count} 个请重新生成大图。`
+        );
+      } else {
+        logs.push(
+          `内容感知切分：画面实际检测到 ${sliceCount} 个素材（设定 ${count} 个，多 ${sliceCount - count} 个），已按画面实际数量切割，多出的素材一并保留。`
+        );
+      }
     } else {
       equalMode = true;
       // 等分兜底：整张按 cols×rows 的固定列槽切分，只取前 sliceCount 个槽位。
@@ -299,7 +315,7 @@ export class GenerationService {
       prompt: draft.prompt
     });
 
-    await this.persistResult(project, input, asset, logs, files);
+    await this.persistResult(project, asset, logs, files);
 
     // 入库成功：把同一 runId 的草稿记录原地更新为已入库（保留原始生成时间与生成日志）
     const previousHistory = await this.historyService.get(project.path, draft.runId);
@@ -509,7 +525,6 @@ export class GenerationService {
 
   private async persistResult(
     project: Project,
-    input: GenerateAssetInput,
     asset: Asset,
     logs: string[],
     files: string[]

@@ -10,30 +10,15 @@ import type {
   GridSliceOptions,
   IpcResponse,
   ManualRegion,
-  Project
+  Project,
+  PromptAssistantSettings,
+  PromptAssistantInput
 } from "@shared/types";
-import { AIGenerationService } from "./services/aiService";
-import { GenerationHistoryService } from "./services/generationHistoryService";
-import { GenerationService } from "./services/generationService";
-import { ImageProcessingService } from "./services/imageService";
-import { ProjectService } from "./services/projectService";
-import { ReferenceService } from "./services/referenceService";
-import { SettingsService } from "./services/settingsService";
-import { resolveProjectPath, sanitizeFileName } from "./services/utils";
+import { createServices, type Services } from "./services/factory";
+import { getUserDataDir, resolveProjectPath, sanitizeFileName } from "./services/utils";
 
-const settingsService = new SettingsService();
-const projectService = new ProjectService(settingsService);
-const referenceService = new ReferenceService();
-const aiService = new AIGenerationService();
-const imageService = new ImageProcessingService();
-const historyService = new GenerationHistoryService();
-const generationService = new GenerationService(
-  settingsService,
-  projectService,
-  aiService,
-  imageService,
-  historyService
-);
+const services: Services = createServices();
+const { settingsService, projectService, referenceService, aiService, imageService, historyService, generationService, promptAssistantService } = services;
 
 // ---- 运行时性能诊断：记录到 <userData>/perf-log.txt，便于定位「历史加载后输入卡顿」类问题 ----
 const perfLogPath = path.join(app.getPath("userData"), "perf-log.txt");
@@ -106,6 +91,14 @@ function registerIpc(): void {
   handle("settings:save", (settings: AppSettings) => settingsService.saveSettings(settings));
   handle("settings:testConnection", (settings: AppSettings) => aiService.testConnection(settings));
   handle("settings:fetchModels", (settings: AppSettings) => aiService.fetchModels(settings));
+  // 提示词助手：独立于出图模型的配置与调用
+  handle("settings:getPromptAssistant", () => settingsService.getPromptAssistant());
+  handle("settings:savePromptAssistant", (data: PromptAssistantSettings) => settingsService.savePromptAssistant(data));
+  handle("promptAssistant:test", (settings: PromptAssistantSettings) => promptAssistantService.testConnection(settings));
+  handle("promptAssistant:fetchModels", (settings: PromptAssistantSettings) => promptAssistantService.fetchModels(settings));
+  handle("promptAssistant:generate", (settings: PromptAssistantSettings, input: PromptAssistantInput) =>
+    promptAssistantService.generate(settings, input)
+  );
   handle("dialog:chooseDirectory", async (title: string, defaultPath: string) => {
     const result = await dialog.showOpenDialog({
       title: title || "选择目录",
@@ -219,12 +212,46 @@ app.whenReady().then(() => {
   installPerfSamplers();
   createWindow();
 
+  // 对外 MCP 链接（可选）：仅在设置 MCP_PORT 时，在主进程内启动 HTTP/SSE MCP server，
+  // 复用已实例化的 services（与 GUI 完全一致的出图 / 切图逻辑）。
+  if (process.env.MCP_PORT) {
+    void startMcpInMainProcess(services).catch((err) => {
+      console.error("[MCP] 主进程内启动 MCP server 失败：", err);
+    });
+  }
+
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
     }
   });
 });
+
+async function startMcpInMainProcess(shared: Services): Promise<void> {
+  const { createMcpServer } = await import("../mcp/server");
+  const { startMcpHttpServer } = await import("../mcp/http");
+  const port = Number(process.env.MCP_PORT);
+  const host = process.env.MCP_HOST || "127.0.0.1";
+  const idleEnv = process.env.MCP_SESSION_IDLE_MS;
+  const idleMs = idleEnv === undefined || idleEnv === "" ? undefined : Number(idleEnv);
+  const sessionIdleTimeoutMs =
+    idleMs === undefined || Number.isNaN(idleMs) || idleMs < 0 ? undefined : idleMs;
+  const settingsPath = path.join(getUserDataDir(), "settings.json");
+  // 传入工厂而非实例：每个 MCP 会话使用独立 Server 实例，支持并发客户端
+  const httpServer = await startMcpHttpServer(() => createMcpServer(shared), {
+    host,
+    port,
+    info: { settingsPath, settingsFound: await fs.pathExists(settingsPath) },
+    sessionIdleTimeoutMs
+  });
+  const address = httpServer.address();
+  const boundPort = typeof address === "object" && address ? address.port : port;
+  console.log(`[MCP] 主进程 MCP server 已启动：http://${host}:${boundPort}/mcp`);
+  console.log(`[MCP] 出图配置：${settingsPath}`);
+  if (host === "0.0.0.0") {
+    console.warn("[MCP] 警告：MCP 监听 0.0.0.0，请确认已有网络层鉴权/防火墙保护。");
+  }
+}
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

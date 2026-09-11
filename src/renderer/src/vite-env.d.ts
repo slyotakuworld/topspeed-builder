@@ -16,6 +16,9 @@ import type {
   IpcResponse,
   ManualRegion,
   Project,
+  PromptAssistantSettings,
+  PromptAssistantInput,
+  PromptAssistantResult,
   RecentProject
 } from "@shared/types";
 
@@ -35,6 +38,14 @@ declare global {
       saveSettings(settings: AppSettings): Promise<IpcResponse<AppSettings>>;
       testConnection(settings: AppSettings): Promise<IpcResponse<{ ok: boolean; status: number; detail: string }>>;
       fetchModels(settings: AppSettings): Promise<IpcResponse<string[]>>;
+      getPromptAssistant(): Promise<IpcResponse<PromptAssistantSettings>>;
+      savePromptAssistant(data: PromptAssistantSettings): Promise<IpcResponse<PromptAssistantSettings>>;
+      promptAssistantTest(settings: PromptAssistantSettings): Promise<IpcResponse<{ ok: boolean; status: number; detail: string }>>;
+      promptAssistantFetchModels(settings: PromptAssistantSettings): Promise<IpcResponse<string[]>>;
+      promptAssistantGenerate(
+        settings: PromptAssistantSettings,
+        input: PromptAssistantInput
+      ): Promise<IpcResponse<PromptAssistantResult>>;
       chooseReferenceImages(projectPath: string): Promise<IpcResponse<ImportedReferenceImage[]>>;
       generateGrid(input: GenerateAssetInput): Promise<IpcResponse<GridDraft>>;
       commitSlice(

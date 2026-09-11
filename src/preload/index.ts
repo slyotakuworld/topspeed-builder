@@ -8,7 +8,9 @@ import type {
   GridDraft,
   GridSliceOptions,
   ManualRegion,
-  Project
+  Project,
+  PromptAssistantInput,
+  PromptAssistantSettings
 } from "@shared/types";
 
 contextBridge.exposeInMainWorld("topspeedBuilder", {
@@ -22,6 +24,12 @@ contextBridge.exposeInMainWorld("topspeedBuilder", {
   saveSettings: (settings: AppSettings) => ipcRenderer.invoke("settings:save", settings),
   testConnection: (settings: AppSettings) => ipcRenderer.invoke("settings:testConnection", settings),
   fetchModels: (settings: AppSettings) => ipcRenderer.invoke("settings:fetchModels", settings),
+  getPromptAssistant: () => ipcRenderer.invoke("settings:getPromptAssistant"),
+  savePromptAssistant: (data: PromptAssistantSettings) => ipcRenderer.invoke("settings:savePromptAssistant", data),
+  promptAssistantTest: (settings: PromptAssistantSettings) => ipcRenderer.invoke("promptAssistant:test", settings),
+  promptAssistantFetchModels: (settings: PromptAssistantSettings) => ipcRenderer.invoke("promptAssistant:fetchModels", settings),
+  promptAssistantGenerate: (settings: PromptAssistantSettings, input: PromptAssistantInput) =>
+    ipcRenderer.invoke("promptAssistant:generate", settings, input),
   chooseReferenceImages: (projectPath: string) => ipcRenderer.invoke("reference:chooseImages", projectPath),
   generateGrid: (input: GenerateAssetInput) => ipcRenderer.invoke("generate:grid", input),
   commitSlice: (input: GenerateAssetInput, draft: GridDraft, options: GridSliceOptions) =>

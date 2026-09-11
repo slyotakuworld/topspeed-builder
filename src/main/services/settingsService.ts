@@ -1,14 +1,14 @@
 import path from "node:path";
-import { app } from "electron";
 import fs from "fs-extra";
-import type { AppSettings } from "@shared/types";
-import { writeJsonFile } from "./utils";
+import type { AppSettings, PromptAssistantSettings } from "@shared/types";
+import { DEFAULT_PROMPT_ASSISTANT_FIELDS } from "@shared/types";
+import { getUserDataDir, withFileLock, writeJsonFile } from "./utils";
 
 export class SettingsService {
   private readonly settingsPath: string;
 
-  constructor() {
-    this.settingsPath = path.join(app.getPath("userData"), "settings.json");
+  constructor(userDataDir?: string) {
+    this.settingsPath = path.join(userDataDir ?? getUserDataDir(), "settings.json");
   }
 
   async getSettings(): Promise<AppSettings> {
@@ -19,9 +19,47 @@ export class SettingsService {
     };
   }
 
+  /**
+   * 保存出图设置。注意：settings.json 里还并存着 promptAssistant 等其它子键，
+   * 因此必须「读旧文件 → 合并后再写」，否则整文件覆盖会把提示词助手配置冲掉。
+   */
   async saveSettings(settings: AppSettings): Promise<AppSettings> {
-    await writeJsonFile(this.settingsPath, settings);
+    await withFileLock(this.settingsPath, async () => {
+      const raw = await this.readRawSettings();
+      await writeJsonFile(this.settingsPath, { ...raw, ...settings });
+    });
     return this.getSettings();
+  }
+
+  /** 提示词助手配置：独立于出图模型，单独持久化在 settings.json 的 promptAssistant 子键 */
+  async getPromptAssistant(): Promise<PromptAssistantSettings> {
+    const raw = await this.readRawSettings();
+    const saved = (raw.promptAssistant as Partial<PromptAssistantSettings>) ?? {};
+    // fields 需逐键合并：旧配置可能只有部分字段，整对象覆盖会丢默认值
+    return { ...this.defaultPromptAssistant(), ...saved, fields: { ...DEFAULT_PROMPT_ASSISTANT_FIELDS, ...(saved.fields ?? {}) } };
+  }
+
+  async savePromptAssistant(data: PromptAssistantSettings): Promise<PromptAssistantSettings> {
+    await withFileLock(this.settingsPath, async () => {
+      const raw = await this.readRawSettings();
+      raw.promptAssistant = { ...this.defaultPromptAssistant(), ...data, fields: { ...DEFAULT_PROMPT_ASSISTANT_FIELDS, ...(data.fields ?? {}) } };
+      await writeJsonFile(this.settingsPath, raw);
+    });
+    return this.getPromptAssistant();
+  }
+
+  private defaultPromptAssistant(): PromptAssistantSettings {
+    return { baseUrl: "", apiKey: "", model: "", availableModels: [], fields: { ...DEFAULT_PROMPT_ASSISTANT_FIELDS } };
+  }
+
+  private async readRawSettings(): Promise<Record<string, unknown>> {
+    try {
+      if (!(await fs.pathExists(this.settingsPath))) return {};
+      const parsed = JSON.parse(await fs.readFile(this.settingsPath, "utf8"));
+      return (parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {}) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
   }
 
   private async getDefaultSettings(): Promise<AppSettings> {

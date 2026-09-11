@@ -142,8 +142,8 @@ export class GenerationService {
       throw new Error(`网格大图不存在，请重新生成：${gridPath}`);
     }
 
-    const cols = this.clampInt(options.cols || draft.cols, 1, 24);
-    const rows = this.clampInt(options.rows || draft.rows, 1, 24);
+    const cols = this.clampInt(options.cols || draft.cols, 1, 4);
+    const rows = this.clampInt(options.rows || draft.rows, 1, 4);
     const count = this.effectiveCount(input);
     const shrinkPercent = this.clampInt(options.shrinkPercent ?? 8, 0, 30);
     const shiftX = this.clampInt(options.shiftX ?? 0, -1024, 1024);

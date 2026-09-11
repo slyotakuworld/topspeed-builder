@@ -18,7 +18,10 @@
     "dist:mac:signed:arm64": "npm run build && electron-builder --mac --arm64 -c.mac.notarize=true --publish never",
     "dist:mac:signed:x64": "npm run build && electron-builder --mac --x64 -c.mac.notarize=true --publish never",
     "dist:linux": "npm run build && electron-builder --linux --publish never",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "node --max-old-space-size=8192 node_modules/typescript/bin/tsc --noEmit",
+    "build:extra": "node scripts/build-extra.mjs",
+    "cli": "npm run build:extra && node build/extra/cli.cjs",
+    "mcp": "npm run build:extra && node build/extra/mcp.cjs"
   },
   "build": {
     "appId": "com.topspeed.builder",
@@ -36,7 +39,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "assets/icon.ico"
@@ -51,17 +56,24 @@
       "unicode": true
     },
     "mac": {
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "icon": "assets/icon.icns",
       "category": "public.app-category.graphics-design",
       "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "icon": "assets/icon.png"
     }
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "fs-extra": "^11.2.0",
     "i18next": "^26.2.0",
     "jszip": "^3.10.1",

@@ -35,11 +35,15 @@ import type {
   ImportedReferenceImage,
   IpcResponse,
   Project,
+  PromptAssistantResult,
+  PromptAssistantSettings,
   RecentProject,
   ReferenceImageInput,
   ReferenceImageRole,
-  ReferenceStrength
+  ReferenceStrength,
+  PromptAssistantFields
 } from "@shared/types";
+import { STYLE_PRESETS, DEFAULT_PROMPT_ASSISTANT_FIELDS, PROMPT_ASSISTANT_FIELD_KEYS } from "@shared/types";
 import FreeCutModal from "./FreeCutModal";
 
 type Page = "home" | "generate" | "assets" | "settings";
@@ -57,17 +61,7 @@ const gameTypeOptions: SelectOption[] = [
   { value: "塔防", label: "gameType.towerDefense" },
   { value: "其他", label: "gameType.other" }
 ];
-const stylePresets: Array<{ value: string; label: string; text: string }> = [
-  { value: "pixel", label: "generate.style.pixel", text: "Pixel art: crisp hard pixel edges, clean readable silhouette, restrained color palette, no blur, no soft gradients." },
-  { value: "chibi", label: "generate.style.chibi", text: "Chibi art: big head with small body, rounded and cute shapes, clean simple lines, soft color blocking." },
-  { value: "cartoon", label: "generate.style.cartoon", text: "Cartoon style: bright flat colors, bold clean outlines, simple readable shapes, flat cel-like shading." },
-  { value: "anime", label: "generate.style.anime", text: "Japanese anime cel style: clean cel shading, saturated colors, neat lineart, expressive stylized faces." },
-  { value: "retro16", label: "generate.style.retro16", text: "16-bit retro game art: dithered shading, subtle gradients, clear outlines, visible chunky pixels, vibrant palette." },
-  { value: "flat", label: "generate.style.flat", text: "Flat vector design: solid color areas, minimal clean shapes, no gradients, no textures, no outlines." },
-  { value: "lowpoly", label: "generate.style.lowpoly", text: "Low-poly style: faceted geometric surfaces, flat-shaded facets, stylized lighting, crisp silhouettes." },
-  { value: "ink", label: "generate.style.ink", text: "Chinese ink wash (shui-mo) style: expressive brush strokes, ink gradation, soft paper texture, elegant negative space." },
-  { value: "realistic", label: "generate.style.realistic", text: "Realistic painted game concept art: rich painterly texture, natural lighting and material shading, strong volume and fine detail, clearly a hand-painted illustration rather than a photograph." }
-];
+const stylePresets = STYLE_PRESETS;
 const styleCustomValue = "custom";
 const stylePresetOptions: SelectOption[] = stylePresets.map((preset) => ({
   value: preset.value,
@@ -91,17 +85,17 @@ const sizeOptions: SelectOption[] = [
 const sizeCustomValue = "custom";
 const sizeSelectOptions: SelectOption[] = [...sizeOptions, { value: sizeCustomValue, label: "generate.sizeCustom" }];
 /** 数量下拉：常用组合（AI 会按数量自动排布 列×行，覆盖常见素材批次） */
-const countPresets = [1, 2, 3, 4, 6, 8, 9, 12, 16, 20, 24, 30, 36];
+const countPresets = [1, 2, 3, 4, 6, 8, 9, 12, 16];
 const countOptions: SelectOption[] = countPresets.map((value) => ({ value: String(value), label: String(value) }));
-/** 等分兜底切分的 列/行 下拉（上限 16，实际只取前「数量」个槽位） */
-const sliceAxisOptions: SelectOption[] = Array.from({ length: 16 }, (_, index) => ({
+/** 等分兜底切分的 列/行 下拉（非智能对齐模式上限 4） */
+const sliceAxisOptions: SelectOption[] = Array.from({ length: 4 }, (_, index) => ({
   value: String(index + 1),
   label: String(index + 1)
 }));
 /** 历史里可能存在非预设的数量（旧版输入框产物），恢复时吸附到最接近的预设 */
 function nearestCountPreset(value: number): number {
   const numeric = Number.isFinite(value) ? Math.round(value) : 1;
-  const clamped = Math.min(36, Math.max(1, numeric));
+  const clamped = Math.min(16, Math.max(1, numeric));
   let best = countPresets[0];
   for (const candidate of countPresets) {
     if (Math.abs(candidate - clamped) < Math.abs(best - clamped)) best = candidate;
@@ -667,6 +661,7 @@ function GeneratePage(props: {
   const [draft, setDraft] = useState<GridDraft | null>(null);
   const [gridDataUrl, setGridDataUrl] = useState("");
   const [freeCutOpen, setFreeCutOpen] = useState(false);
+  const [paOpen, setPaOpen] = useState(false);
   const [sliceCols, setSliceCols] = useState(0);
   const [sliceRows, setSliceRows] = useState(0);
   // 内容感知切分（默认开启；仅多格 + 透明背景时生效，检测失败自动退回等分）
@@ -829,14 +824,6 @@ function GeneratePage(props: {
       setDraft(nextDraft);
       props.onHistoryChanged();
     }
-  }
-
-  /** 丢弃当前网格草稿/载入提示，回到空白结果区 */
-  function discardDraft(): void {
-    setDraft(null);
-    setGridDataUrl("");
-    setRestoredCommitted(null);
-    setConfigLoaded(false);
   }
 
   /**
@@ -1136,7 +1123,13 @@ function GeneratePage(props: {
       </section>
 
       <section className="panel resultPanel">
-        <PanelTitle icon={Archive} title={t("generate.draft")} />
+        <div className="panelTitleRow">
+          <PanelTitle icon={Archive} title={t("generate.draft")} />
+          <button className="ghostButton panelTitleAction" onClick={() => void generateDraft()}>
+            <RefreshCw size={16} />
+            {t("generate.regenGrid")}
+          </button>
+        </div>
         {draft ? (
           <>
             {/* 网格大图预览：置顶，先看结果再操作 */}
@@ -1169,7 +1162,7 @@ function GeneratePage(props: {
               </div>
             )}
 
-            {/* 操作行：确认切分入库 / 手动保存 / 重新生成 / 放弃 */}
+            {/* 操作行：确认切分入库 / 手动保存 / 在文件夹中显示 */}
             <div className="assetActions sliceActions">
               <button className="primaryButton" onClick={() => void commitDraft()}>
                 <Check size={18} />
@@ -1179,14 +1172,25 @@ function GeneratePage(props: {
                 <Save size={16} />
                 {t("generate.saveDraft")}
               </button>
-              <button className="ghostButton" onClick={() => void generateDraft()}>
-                <RefreshCw size={16} />
-                {t("generate.regenGrid")}
-              </button>
-              <button className="ghostButton" onClick={discardDraft}>
-                <Trash2 size={16} />
-                {t("generate.discard")}
-              </button>
+              {restoredCommitted && restoredCommitted.files.length > 0 && (
+                <button
+                  className="ghostButton"
+                  type="button"
+                  onClick={() =>
+                    void props.runTask(t("busy.locateFile"), () =>
+                      unwrap(
+                        window.topspeedBuilder.showProjectItemInFolder(
+                          props.project.path,
+                          restoredCommitted.files[0]
+                        )
+                      )
+                    )
+                  }
+                >
+                  <FolderOpen size={16} />
+                  {t("history.locate")}
+                </button>
+              )}
             </div>
 
             {/* 出图后切分参数：智能对齐开关 + 等分兜底列/行，紧凑单行，不再整行撑满 */}
@@ -1199,16 +1203,18 @@ function GeneratePage(props: {
                     value={autoAlign}
                     onChange={setAutoAlign}
                   />
-                  <button
-                    type="button"
-                    className="ghostButton freeCutEntry"
-                    disabled={!draft}
-                    title={draft ? t("freecut.title") : ""}
-                    onClick={() => draft && setFreeCutOpen(true)}
-                  >
-                    <Scissors size={14} />
-                    {t("freecut.title")}
-                  </button>
+                  {autoAlign && (
+                    <button
+                      type="button"
+                      className="ghostButton freeCutEntry"
+                      disabled={!draft}
+                      title={draft ? t("freecut.title") : ""}
+                      onClick={() => draft && setFreeCutOpen(true)}
+                    >
+                      <Scissors size={14} />
+                      {t("freecut.title")}
+                    </button>
+                  )}
                   {!autoPreviewCells && (
                     <>
                       <SelectInput
@@ -1266,47 +1272,6 @@ function GeneratePage(props: {
                 }}
               />
             )}
-
-            {/* 本批次产出的图片/文字信息：始终放列表最下面 */}
-            {restoredCommitted && (
-              <div className="genHistoryBlock committedPreview">
-                <div className="genHistoryFilesHead">
-                  <strong>{t("history.restoredFiles", { count: restoredCommitted.files.length })}</strong>
-                  {restoredCommitted.files.length > 0 ? (
-                    <button
-                      className="miniClearButton"
-                      type="button"
-                      onClick={() =>
-                        void props.runTask(t("busy.locateFile"), () =>
-                          unwrap(
-                            window.topspeedBuilder.showProjectItemInFolder(
-                              props.project.path,
-                              restoredCommitted.files[0]
-                            )
-                          )
-                        )
-                      }
-                    >
-                      <FolderOpen size={13} />
-                      {t("history.locate")}
-                    </button>
-                  ) : null}
-                </div>
-                {restoredCommitted.files.length > 0 ? (
-                  <div className="genHistoryFiles">
-                    {restoredCommitted.files.slice(0, 12).map((file) => (
-                      <code key={file} title={file}>
-                        {file.split("/").pop()}
-                      </code>
-                    ))}
-                    {restoredCommitted.files.length > 12 ? <code>+{restoredCommitted.files.length - 12}</code> : null}
-                  </div>
-                ) : null}
-                <div className="inlineNote compactNote">
-                  {restoredCommitted.kind === "committed" ? t("history.committedHint") : t("history.restoredHint")}
-                </div>
-              </div>
-            )}
           </>
         ) : (
           <>
@@ -1323,6 +1288,38 @@ function GeneratePage(props: {
               </button>
             </div>
           </>
+        )}
+
+        {/* 提示词助手：悬浮气泡 + 二级弹窗（不再内嵌在素材生成面板里） */}
+        <button
+          type="button"
+          className="paBubble"
+          title={t("generate.paBubble")}
+          aria-label={t("generate.paBubble")}
+          onClick={() => setPaOpen(true)}
+        >
+          <Sparkles size={20} />
+        </button>
+        {paOpen && (
+          <PromptAssistantDialog
+            assetType={assetType}
+            assetTypeLabelText={t(assetTypeLabel(assetType))}
+            count={isSingleShot ? 1 : count}
+            currentDescription={description}
+            currentStyle={selectedStyleText}
+            onClose={() => setPaOpen(false)}
+            onApply={(r, fields) => {
+              if (fields.description) setDescription(r.description);
+              if (fields.detailPrompt) setDetailPrompt(r.detailPrompt);
+              if (fields.cellNames) setCellNamesText(r.cellNames.join("\n"));
+              if (fields.style) {
+                // 勾选美术风格 = 生成自定义风格描述：写入自定义风格框并切到「自定义风格」
+                setCustomStyle(r.style);
+                setStylePreset(styleCustomValue);
+              }
+              setPaOpen(false);
+            }}
+          />
         )}
       </section>
     </div>
@@ -1928,6 +1925,7 @@ function SettingsPage(props: {
           </span>
         )}
       </div>
+      <PromptAssistantSettingsBlock />
       <button
         className="primaryButton"
         onClick={async () => {
@@ -1938,7 +1936,307 @@ function SettingsPage(props: {
         <Save size={18} />
         {t("settings.save")}
       </button>
+      <McpCliInfoBlock />
     </section>
+  );
+}
+
+function McpCliInfoBlock(): JSX.Element {
+  const { t } = useTranslation();
+  return (
+    <>
+      <div className="sectionRule" />
+      <strong>{t("settings.mcpCliSection")}</strong>
+      <div className="inlineNote">{t("settings.mcpCliHint")}</div>
+      <div className="inlineNote compactNote">{t("settings.mcpCliMcp")}</div>
+      <div className="inlineNote compactNote">{t("settings.mcpCliCli")}</div>
+    </>
+  );
+}
+
+function PromptAssistantSettingsBlock(): JSX.Element {
+  const { t } = useTranslation();
+  const [draft, setDraft] = useState<PromptAssistantSettings | null>(null);
+  const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [fetchingModels, setFetchingModels] = useState(false);
+
+  useEffect(() => {
+    window.topspeedBuilder.getPromptAssistant().then((res) => {
+      if (res.ok && res.data) setDraft(res.data);
+    }).catch(() => undefined);
+  }, []);
+
+  const modelOptions = useMemo(() => {
+    const known = new Set(draft ? draft.availableModels : []);
+    const options = draft ? [...draft.availableModels] : [];
+    if (draft?.model && !known.has(draft.model)) options.push(draft.model);
+    return options;
+  }, [draft?.availableModels, draft?.model]);
+
+  if (!draft) return <div className="sectionRule" />;
+
+  const runTest = async () => {
+    if (!draft) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await window.topspeedBuilder.promptAssistantTest(draft);
+      if (res.ok && res.data) setTestResult({ ok: res.data.ok, detail: res.data.detail });
+      else setTestResult({ ok: false, detail: res.error ?? "检测请求失败" });
+    } catch (e) {
+      setTestResult({ ok: false, detail: String(e) });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const fetchModels = async () => {
+    setFetchingModels(true);
+    setTestResult(null);
+    try {
+      const res = await window.topspeedBuilder.promptAssistantFetchModels(draft);
+      if (res.ok && res.data) {
+        const models = res.data;
+        setDraft((cur) =>
+          cur
+            ? { ...cur, availableModels: models, model: cur.model && models.includes(cur.model) ? cur.model : (models[0] ?? cur.model ?? "") }
+            : cur
+        );
+      } else {
+        setTestResult({ ok: false, detail: res.error ?? t("settings.fetchModelsFail") });
+      }
+    } catch (e) {
+      setTestResult({ ok: false, detail: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setFetchingModels(false);
+    }
+  };
+
+  const save = async () => {
+    if (!draft) return;
+    const saved = await window.topspeedBuilder.savePromptAssistant(draft);
+    if (saved.ok && saved.data) setDraft(saved.data);
+  };
+
+  return (
+    <>
+      <div className="sectionRule" />
+      <div className="inlineNote">{t("settings.paHint")}</div>
+      <div className="formGrid apiGrid">
+        <TextInput
+          label={t("settings.paApiBaseUrl")}
+          value={draft.baseUrl}
+          placeholder={t("settings.apiBaseUrlHint")}
+          onChange={(baseUrl) => setDraft({ ...draft, baseUrl })}
+        />
+        <TextInput label={t("settings.paApiKey")} value={draft.apiKey} type="password" onChange={(apiKey) => setDraft({ ...draft, apiKey })} />
+        <button className="ghostButton" disabled={fetchingModels} onClick={fetchModels}>
+          {fetchingModels ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+          <span>{fetchingModels ? t("settings.fetchingModels") : t("settings.fetchModels")}</span>
+        </button>
+      </div>
+      <div className="modelActionBlock">
+        <label className="field">
+          <span>{t("settings.paModel")}</span>
+          <select value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })}>
+            {modelOptions.length === 0 && <option value="">{t("settings.modelPlaceholder")}</option>}
+            {modelOptions.map((option) => (
+              <option key={option} value={option}>{option}</option>
+            ))}
+          </select>
+        </label>
+        <button className="ghostButton" style={{ whiteSpace: "nowrap" }} disabled={testing} onClick={runTest}>
+          {testing ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+          <span>{testing ? t("settings.testing") : t("settings.testConnection")}</span>
+        </button>
+        {testResult && (
+          <span style={{ padding: "6px 0", fontSize: 13, color: testResult.ok ? "#4ade80" : "#f87171" }}>
+            {testResult.ok ? `${t("settings.testOk")} · ${testResult.detail}` : `${t("settings.testFail")}: ${testResult.detail}`}
+          </span>
+        )}
+        <button className="primaryButton" onClick={save}>
+          <Save size={18} />
+          {t("settings.save")}
+        </button>
+      </div>
+    </>
+  );
+}
+
+/** 四个生成字段 -> i18n 文案 key */
+const PA_FIELD_LABEL_KEYS: Record<keyof PromptAssistantFields, string> = {
+  description: "generate.paFieldDescription",
+  detailPrompt: "generate.paFieldDetailPrompt",
+  cellNames: "generate.paFieldCellNames",
+  style: "generate.paFieldStyle"
+};
+
+function PromptAssistantDialog(props: {
+  assetType: AssetType;
+  assetTypeLabelText: string;
+  count: number;
+  currentDescription: string;
+  currentStyle: string;
+  onApply: (result: PromptAssistantResult, fields: PromptAssistantFields) => void;
+  onClose: () => void;
+}): JSX.Element {
+  const { t } = useTranslation();
+  const [config, setConfig] = useState<PromptAssistantSettings | null>(null);
+  const [natural, setNatural] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [applied, setApplied] = useState(false);
+  const [rawOutput, setRawOutput] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    window.topspeedBuilder.getPromptAssistant().then((res) => {
+      if (res.ok && res.data) setConfig(res.data);
+    }).catch(() => undefined);
+  }, []);
+
+  const fields: PromptAssistantFields = config?.fields ?? DEFAULT_PROMPT_ASSISTANT_FIELDS;
+  const anyFieldOn = PROMPT_ASSISTANT_FIELD_KEYS.some((key) => fields[key]);
+
+  /** 改配置并即时持久化，下次打开保持选择 */
+  const updateConfig = (patch: Partial<PromptAssistantSettings>): void => {
+    if (!config) return;
+    const next: PromptAssistantSettings = { ...config, ...patch };
+    setConfig(next);
+    void window.topspeedBuilder.savePromptAssistant(next).then((res) => {
+      if (res.ok && res.data) setConfig(res.data);
+    }).catch(() => undefined);
+  };
+
+  const toggleField = (key: keyof PromptAssistantFields): void => {
+    updateConfig({ fields: { ...fields, [key]: !fields[key] } });
+  };
+
+  const run = async () => {
+    setError("");
+    setApplied(false);
+    // 实时读取最新助手配置：弹窗为按需挂载，但设置页改完不会自动刷新，仍读一次最新
+    let cfg = config;
+    try {
+      const latest = await window.topspeedBuilder.getPromptAssistant();
+      if (latest.ok && latest.data) {
+        cfg = latest.data;
+        setConfig(latest.data);
+      }
+    } catch {
+      /* 沿用已缓存配置 */
+    }
+    if (!cfg || !cfg.baseUrl.trim() || !cfg.model.trim()) {
+      setError(t("generate.paConfigMissing"));
+      return;
+    }
+    if (!natural.trim()) {
+      setError(t("generate.paNaturalEmpty"));
+      return;
+    }
+    if (!PROMPT_ASSISTANT_FIELD_KEYS.some((key) => (cfg.fields ?? DEFAULT_PROMPT_ASSISTANT_FIELDS)[key])) {
+      setError(t("generate.paNoFields"));
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await window.topspeedBuilder.promptAssistantGenerate(cfg, {
+        naturalLanguage: natural.trim(),
+        assetType: props.assetType,
+        count: props.count > 0 ? props.count : 1,
+        currentDescription: props.currentDescription,
+        currentStyle: props.currentStyle,
+        fields: cfg.fields ?? DEFAULT_PROMPT_ASSISTANT_FIELDS
+      });
+      if (res.ok && res.data) {
+        if (res.data.parsed) {
+          props.onApply(res.data, cfg.fields ?? DEFAULT_PROMPT_ASSISTANT_FIELDS);
+          setApplied(true);
+          setRawOutput("");
+        } else {
+          // 模型未按约定返回 JSON：展示原始文本，由用户手动复制粘贴到输入框
+          setRawOutput(res.data.raw);
+          setError(t("generate.paRawHint"));
+        }
+      } else {
+        setError(res.error ?? t("generate.paNeedConfig"));
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copyRaw = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(rawOutput);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <div className="paDialogOverlay" onMouseDown={props.onClose}>
+      <div className="paDialog" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="paDialogHead">
+          <div className="paHeader">
+            <strong>{t("generate.paTitle")}</strong>
+            <span>{t("generate.paHint")}</span>
+          </div>
+          <button type="button" className="paDialogClose" aria-label={t("notice.dismiss")} onClick={props.onClose}>
+            <X size={18} />
+          </button>
+        </div>
+        {!config && <div className="inlineNote compactNote">{t("generate.paNeedConfig")}</div>}
+        <div className="paContext">
+          {t("generate.paContext", { type: props.assetTypeLabelText, count: props.count > 0 ? props.count : 1 })}
+        </div>
+        <div className="paFields">
+          <span className="paFieldsLabel">{t("generate.paFields")}</span>
+          <div className="paFieldToggles">
+            {PROMPT_ASSISTANT_FIELD_KEYS.map((key) => (
+              <label key={key} className="checkboxField">
+                <input type="checkbox" checked={fields[key]} onChange={() => toggleField(key)} />
+                <span>{t(PA_FIELD_LABEL_KEYS[key])}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+        <div className="paForm">
+          <label className="field paNaturalField">
+            <span>{t("generate.paNatural")}</span>
+            <textarea
+              className="paNatural"
+              value={natural}
+              placeholder={t("generate.paNaturalPlaceholder")}
+              onChange={(event) => setNatural(event.target.value)}
+            />
+          </label>
+          <button className="primaryButton" disabled={busy || !anyFieldOn} onClick={run}>
+            {busy ? <Loader2 size={16} className="spin" /> : <Sparkles size={16} />}
+            <span>{busy ? t("generate.paGenerating") : t("generate.paGenerate")}</span>
+          </button>
+        </div>
+        {!anyFieldOn && <div className="inlineNote" style={{ color: "#f87171" }}>{t("generate.paNoFields")}</div>}
+        {applied && <div className="inlineNote" style={{ color: "#4ade80" }}>{t("generate.paApplied")}</div>}
+        {rawOutput && (
+          <div className="paRawBox">
+            <div className="paRawHead">
+              <span>{t("generate.paRawHint")}</span>
+              <button type="button" className="ghostButton" onClick={() => void copyRaw()}>
+                {copied ? t("generate.paCopied") : t("generate.paCopy")}
+              </button>
+            </div>
+            <textarea className="paRaw" readOnly value={rawOutput} />
+          </div>
+        )}
+        {error && <div className="inlineNote" style={{ color: "#f87171" }}>{error}</div>}
+      </div>
+    </div>
   );
 }
 

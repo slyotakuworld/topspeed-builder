@@ -1,3 +1,4 @@
+import os from "node:os";
 import path from "node:path";
 import fs from "fs-extra";
 
@@ -117,4 +118,66 @@ export function safeJoinInside(root: string, ...segments: string[]): string {
   }
 
   return target;
+}
+
+/** Electron 的 app.getName() 取 package.json 的 productName / name；本项目顶层无 productName，故为 name */
+export const APP_DIR_NAME = "topspeed-builder";
+
+/**
+ * 复刻 Electron `app.getPath("userData")` 的平台路径（不依赖 electron 模块）。
+ * CLI / MCP 等独立进程据此定位 GUI 写入的 settings.json。
+ *  - win32 : %APPDATA%\<appName>
+ *  - darwin: ~/Library/Application Support/<appName>
+ *  - linux : $XDG_CONFIG_HOME(默认 ~/.config)/<appName>
+ */
+function platformUserDataDir(appName: string): string {
+  if (process.platform === "win32") {
+    const appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
+    return path.join(appData, appName);
+  }
+  if (process.platform === "darwin") {
+    return path.join(os.homedir(), "Library", "Application Support", appName);
+  }
+  const xdg = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
+  return path.join(xdg, appName);
+}
+
+/**
+ * 用户数据目录（settings.json 等落盘位置）。优先级：
+ *  1. env.TOPSPEED_USER_DATA —— 显式覆盖（CLI / MCP / 测试可指定）。
+ *  2. Electron 运行时 —— app.getPath("userData")，与 GUI 完全一致。
+ *  3. 独立 Node 进程 —— 复刻 Electron userData 的平台路径；若该目录无 settings.json
+ *     而旧版回退目录 ~/.topspeed-builder 有，则兼容读取旧位置。
+ * 用动态 require 而非顶层 import "electron"，避免独立进程加载 electron 模块失败。
+ */
+export function getUserDataDir(): string {
+  const override = process.env.TOPSPEED_USER_DATA;
+  if (override) return override;
+
+  try {
+    const req = (globalThis as { require?: NodeRequire }).require;
+    if (req && typeof process !== "undefined" && (process as { versions?: { electron?: string } }).versions?.electron) {
+      const electronMod = req("electron") as { app?: { getPath: (name: string) => string } };
+      if (electronMod?.app) {
+        return electronMod.app.getPath("userData");
+      }
+    }
+  } catch {
+    /* 非 Electron 环境，走下方平台路径 */
+  }
+
+  const candidates = [
+    platformUserDataDir(APP_DIR_NAME),
+    // 打包产物若把 productName 作为应用名，userData 目录会带空格；一并兼容
+    platformUserDataDir("Topspeed Builder"),
+    path.join(os.homedir(), ".topspeed-builder")
+  ];
+  for (const dir of candidates) {
+    try {
+      if (fs.existsSync(path.join(dir, "settings.json"))) return dir;
+    } catch {
+      /* 忽略不可访问的候选目录 */
+    }
+  }
+  return candidates[0];
 }

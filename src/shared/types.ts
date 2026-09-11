@@ -12,6 +12,48 @@ export type GenerationQuality = "low" | "medium" | "high";
 export type ReferenceImageRole = "subject" | "style" | "composition" | "palette";
 export type ReferenceStrength = "low" | "medium" | "high";
 
+/** 内置美术风格预设（value 与生成时传入的 style 一致；text 为发送给绘图模型的英文风格描述） */
+export interface StylePreset {
+  value: string;
+  /** i18n 文案 key，renderer 用它做下拉展示 */
+  label: string;
+  text: string;
+}
+export const STYLE_PRESETS: StylePreset[] = [
+  { value: "pixel", label: "generate.style.pixel", text: "Pixel art: crisp hard pixel edges, clean readable silhouette, restrained color palette, no blur, no soft gradients." },
+  { value: "chibi", label: "generate.style.chibi", text: "Chibi art: big head with small body, rounded and cute shapes, clean simple lines, soft color blocking." },
+  { value: "cartoon", label: "generate.style.cartoon", text: "Cartoon style: bright flat colors, bold clean outlines, simple readable shapes, flat cel-like shading." },
+  { value: "anime", label: "generate.style.anime", text: "Japanese anime cel style: clean cel shading, saturated colors, neat lineart, expressive stylized faces." },
+  { value: "retro16", label: "generate.style.retro16", text: "16-bit retro game art: dithered shading, subtle gradients, clear outlines, visible chunky pixels, vibrant palette." },
+  { value: "flat", label: "generate.style.flat", text: "Flat vector design: solid color areas, minimal clean shapes, no gradients, no textures, no outlines." },
+  { value: "lowpoly", label: "generate.style.lowpoly", text: "Low-poly style: faceted geometric surfaces, flat-shaded facets, stylized lighting, crisp silhouettes." },
+  { value: "ink", label: "generate.style.ink", text: "Chinese ink wash (shui-mo) style: expressive brush strokes, ink gradation, soft paper texture, elegant negative space." },
+  { value: "realistic", label: "generate.style.realistic", text: "Realistic painted game concept art: rich painterly texture, natural lighting and material shading, strong volume and fine detail, clearly a hand-painted illustration rather than a photograph." }
+];
+/** 提示词助手：四个生成字段的独立开关（决定生成哪些字段、回填哪些字段） */
+export interface PromptAssistantFields {
+  /** 整体描述 */
+  description: boolean;
+  /** 对象细节提示词 */
+  detailPrompt: boolean;
+  /** 素材名称清单 */
+  cellNames: boolean;
+  /** 美术风格（自定义描述 / 内置预设） */
+  style: boolean;
+}
+export const DEFAULT_PROMPT_ASSISTANT_FIELDS: PromptAssistantFields = {
+  description: true,
+  detailPrompt: true,
+  cellNames: true,
+  style: true
+};
+export const PROMPT_ASSISTANT_FIELD_KEYS: Array<keyof PromptAssistantFields> = [
+  "description",
+  "detailPrompt",
+  "cellNames",
+  "style"
+];
+
 export interface Size {
   width: number;
   height: number;
@@ -88,6 +130,55 @@ export interface AppSettings {
   availableModels: string[];
   defaultProjectRoot: string;
   defaultExportDirectory: string;
+}
+
+/**
+ * 提示词助手配置：完全独立于出图模型（AppSettings），走单独的 API / Key。
+ * 用于调用 LLM（OpenAI 兼容 /v1/chat/completions）生成生图所需的提示词文本。
+ */
+export interface PromptAssistantSettings {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  availableModels: string[];
+  /** 四个生成字段的开关，默认全开；关闭的字段不生成、也不回填 */
+  fields: PromptAssistantFields;
+}
+
+/** 提示词助手：用户给出的输入（不再单独要主题/类型/数量，而是复用当前素材生成参数） */
+export interface PromptAssistantInput {
+  /** 用户的自然语言描述：结合当前已有的素材生成参数，描述想要的风格 / 效果 / 对象等 */
+  naturalLanguage: string;
+  /** 现有素材生成参数：类型（如 icon / enemy / character…），作为生成约束 */
+  assetType: string;
+  /** 现有素材生成参数：数量，用于约束 cellNames 的数量 */
+  count: number;
+  /** 可选：当前已有的整体描述，作为补充上下文 */
+  currentDescription?: string;
+  /** 可选：当前已有的自定义风格描述，作为补充上下文 */
+  currentStyle?: string;
+  /** 可选：本次要生成的字段开关（缺省=全开） */
+  fields?: PromptAssistantFields;
+}
+
+/** 提示词助手：LLM 生成的四个提示词字段 */
+export interface PromptAssistantResult {
+  /** 对整张图要出现的内容做整体描述 */
+  description: string;
+  /** 细节提示词：造型 / 配色 / 材质 / 光影等可追加的细节要求 */
+  detailPrompt: string;
+  /** 素材名称清单（顺序即网格顺序） */
+  cellNames: string[];
+  /** 美术风格自定义描述 */
+  style: string;
+  /**
+   * 是否成功从模型输出中解析出结构化 JSON。
+   * false 表示模型未按要求返回 JSON，调用方应展示 raw 原始文本，
+   * 由用户手动复制粘贴到对应输入框。
+   */
+  parsed: boolean;
+  /** 模型原始输出（无论是否解析成功都带回，用于解析失败时的复制粘贴兜底） */
+  raw: string;
 }
 
 export interface CreateProjectInput {

@@ -23,6 +23,20 @@ interface Point {
   y: number;
 }
 
+interface View {
+  scale: number;
+  tx: number;
+  ty: number;
+}
+
+interface PanState {
+  x0: number;
+  y0: number;
+  tx0: number;
+  ty0: number;
+  moved: boolean;
+}
+
 interface FreeCutModalProps {
   projectPath: string;
   gridImagePath: string;
@@ -86,26 +100,42 @@ function drawCrop(canvas: HTMLCanvasElement, img: HTMLImageElement, points: Poin
   ctx.restore();
 }
 
+/** 世界边距：让切图框即使超出图片范围也能完整显示，不会被画布裁掉 */
+function computeMargin(w: number, h: number): number {
+  if (w <= 0 || h <= 0) return 0;
+  return Math.max(140, Math.round(Math.max(w, h) * 0.22));
+}
+
 function CropThumb({
   img,
   points,
+  index,
   selected,
   onSelect,
-  onDelete
+  onDelete,
+  onZoom
 }: {
   img: HTMLImageElement | null;
   points: Point[];
+  index: number;
   selected: boolean;
   onSelect: () => void;
   onDelete: () => void;
+  onZoom: () => void;
 }): JSX.Element {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     if (ref.current && img) drawCrop(ref.current, img, points);
   }, [img, points]);
   return (
-    <div className={`freeCutThumb${selected ? " selected" : ""}`} onClick={onSelect}>
-      <canvas ref={ref} width={104} height={104} />
+    <div
+      className={`freeCutThumb${selected ? " selected" : ""}`}
+      onClick={onSelect}
+      onDoubleClick={onZoom}
+      title="双击放大查看全图"
+    >
+      <canvas ref={ref} width={150} height={150} />
+      <span className="freeCutThumbIdx">{index + 1}</span>
       <button
         type="button"
         className="freeCutThumbDel"
@@ -136,14 +166,35 @@ export default function FreeCutModal(props: FreeCutModalProps): JSX.Element {
   const [edited, setEdited] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  const [view, setView] = useState<View>({ scale: 1, tx: 0, ty: 0 });
+  const [lightbox, setLightbox] = useState<{ points: Point[]; index: number } | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
   const actionRef = useRef<
     null | { kind: "rect"; start: Point } | { kind: "vertex"; regionId: string; index: number } | { kind: "move"; regionId: string; last: Point }
   >(null);
   const didDragRef = useRef(false);
+  const panRef = useRef<PanState | null>(null);
+  const viewInitRef = useRef(false);
   const loadedSourceRef = useRef<"auto" | "manual">("auto");
+
+  // 用于在非 React 回调（window 监听）里读取最新值
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const minScaleRef = useRef(0.1);
+  const maxScaleRef = useRef(20);
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const polyDraftRef = useRef(polyDraft);
+  polyDraftRef.current = polyDraft;
+  const suppressClickRef = useRef(false);
+
+  const margin = imgSize.w > 0 ? computeMargin(imgSize.w, imgSize.h) : 0;
+  const bitmapW = imgSize.w + 2 * margin;
+  const bitmapH = imgSize.h + 2 * margin;
 
   // 载入：无缓存时回退智能对齐结果作为初始数据
   useEffect(() => {
@@ -175,53 +226,144 @@ export default function FreeCutModal(props: FreeCutModalProps): JSX.Element {
     };
   }, [gridDataUrl]);
 
-  const getScale = useCallback((): number => {
-    const canvas = canvasRef.current;
-    if (!canvas || canvas.width === 0) return 1;
-    const rect = canvas.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return 1;
-    // contain 比例：屏幕 1px 对应多少 bitmap 像素
-    return Math.min(rect.width / canvas.width, rect.height / canvas.height);
-  }, []);
+  const clamp = useCallback((v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v)), []);
 
-  const toImageCoords = useCallback((e: React.MouseEvent): Point => {
+  // 客户端坐标 -> 图片坐标（世界画布带 MARGIN 偏移，transform 已体现在 getBoundingClientRect 中）
+  const clientToImage = useCallback((e: { clientX: number; clientY: number }): Point => {
     const canvas = canvasRef.current!;
     const rect = canvas.getBoundingClientRect();
-    const imgW = canvas.width;
-    const imgH = canvas.height;
-    // 与 CSS object-fit: contain 一致：先算出居中留白后的显示区域
-    const scale = Math.min(rect.width / imgW, rect.height / imgH);
-    const dispW = imgW * scale;
-    const dispH = imgH * scale;
-    const offX = (rect.width - dispW) / 2;
-    const offY = (rect.height - dispH) / 2;
-    return {
-      x: ((e.clientX - rect.left - offX) / dispW) * imgW,
-      y: ((e.clientY - rect.top - offY) / dispH) * imgH
+    const bw = canvas.width;
+    const bh = canvas.height;
+    const bx = ((e.clientX - rect.left) / rect.width) * bw;
+    const by = ((e.clientY - rect.top) / rect.height) * bh;
+    return { x: bx - margin, y: by - margin };
+  }, [margin]);
+
+  // 计算让整张图（含边距）完整居中的视图
+  const getFitView = useCallback((): View | null => {
+    const el = stageRef.current;
+    if (!el || imgSize.w === 0) return null;
+    const rect = el.getBoundingClientRect();
+    const cw = rect.width;
+    const ch = rect.height;
+    if (cw <= 0 || ch <= 0) return null;
+    const W = bitmapW;
+    const H = bitmapH;
+    const s = Math.min(cw / W, ch / H) * 0.95;
+    const tx = (cw - W * s) / 2;
+    const ty = (ch - H * s) / 2;
+    return { scale: s, tx, ty };
+  }, [imgSize.w, imgSize.h, bitmapW, bitmapH]);
+
+  // 首次拿到图片尺寸后，初始化视图并标定缩放上下限
+  useEffect(() => {
+    if (imgSize.w === 0 || viewInitRef.current) return;
+    const f = getFitView();
+    if (!f) return;
+    viewInitRef.current = true;
+    setView(f);
+    minScaleRef.current = f.scale;
+    maxScaleRef.current = f.scale * 16;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imgSize.w, imgSize.h, getFitView]);
+
+  // 窗口大小变化时重新标定缩放下限并钳制当前视图
+  useEffect(() => {
+    const onResize = () => {
+      const f = getFitView();
+      if (!f) return;
+      minScaleRef.current = f.scale;
+      maxScaleRef.current = f.scale * 16;
+      setView((v) => ({ ...v, scale: clamp(v.scale, minScaleRef.current, maxScaleRef.current) }));
     };
-  }, []);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [getFitView, clamp]);
+
+  // 滚轮缩放（以光标为中心），用原生非 passive 监听以便 preventDefault
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const { scale, tx, ty } = viewRef.current;
+      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+      const ns = clamp(scale * factor, minScaleRef.current, maxScaleRef.current);
+      const bx = (cx - tx) / scale;
+      const by = (cy - ty) / scale;
+      setView({ scale: ns, tx: cx - bx * ns, ty: cy - by * ns });
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [clamp, imgSize.w]);
+
+  // ESC 关闭（避免“点空白退出”的前提下仍提供键盘退出途径）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   // 重绘叠加层
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || imgSize.w === 0) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const W = canvas.width;
+    const H = canvas.height;
+    const m = margin;
+    const iw = imgSize.w;
+    const ih = imgSize.h;
+    ctx.clearRect(0, 0, W, H);
+    // 世界背景
+    ctx.fillStyle = "#eef1f5";
+    ctx.fillRect(0, 0, W, H);
+    // 图片区域棋盘格，便于区分“画布内/外”
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(m, m, iw, ih);
+    ctx.clip();
+    const cs = 16;
+    for (let y = 0; y < ih; y += cs) {
+      for (let x = 0; x < iw; x += cs) {
+        const dark = ((((x / cs) | 0) + ((y / cs) | 0)) & 1) === 0;
+        ctx.fillStyle = dark ? "#dfe4ea" : "#eef1f5";
+        ctx.fillRect(m + x, m + y, cs, cs);
+      }
+    }
+    ctx.restore();
+    if (imgRef.current) ctx.drawImage(imgRef.current, m, m);
+
     regions.forEach((r) => {
       const sel = r.id === selectedId;
       ctx.lineWidth = sel ? 3 : 2;
       ctx.strokeStyle = sel ? "#ff4d4f" : "rgba(80,160,255,0.9)";
       ctx.beginPath();
-      r.points.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+      r.points.forEach((p, i) => {
+        const x = p.x + m;
+        const y = p.y + m;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
       ctx.closePath();
       ctx.stroke();
       if (sel) {
         r.points.forEach((p) => {
+          const x = p.x + m;
+          const y = p.y + m;
           ctx.fillStyle = "#ff4d4f";
+          ctx.strokeStyle = "#fff";
+          ctx.lineWidth = 2;
           ctx.beginPath();
-          ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+          ctx.arc(x, y, 6, 0, Math.PI * 2);
           ctx.fill();
+          ctx.stroke();
         });
       }
     });
@@ -230,8 +372,8 @@ export default function FreeCutModal(props: FreeCutModalProps): JSX.Element {
       ctx.strokeStyle = "#ff4d4f";
       ctx.lineWidth = 2;
       ctx.strokeRect(
-        rectDraft.start.x,
-        rectDraft.start.y,
+        rectDraft.start.x + m,
+        rectDraft.start.y + m,
         rectDraft.current.x - rectDraft.start.x,
         rectDraft.current.y - rectDraft.start.y
       );
@@ -241,30 +383,46 @@ export default function FreeCutModal(props: FreeCutModalProps): JSX.Element {
       ctx.strokeStyle = "#ff4d4f";
       ctx.lineWidth = 2;
       ctx.beginPath();
-      polyDraft.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
-      if (mousePos) ctx.lineTo(mousePos.x, mousePos.y);
+      polyDraft.forEach((p, i) => {
+        const x = p.x + m;
+        const y = p.y + m;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      if (mousePos) ctx.lineTo(mousePos.x + m, mousePos.y + m);
       ctx.stroke();
       polyDraft.forEach((p, i) => {
+        const x = p.x + m;
+        const y = p.y + m;
         ctx.fillStyle = i === 0 ? "#00b96b" : "#ff4d4f";
         ctx.beginPath();
-        ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+        ctx.arc(x, y, 5, 0, Math.PI * 2);
         ctx.fill();
       });
     }
-  }, [regions, selectedId, rectDraft, polyDraft, mousePos]);
+  }, [regions, selectedId, rectDraft, polyDraft, mousePos, imgSize, margin]);
 
+  // 顶点命中：扫描所有区域，取屏幕距离最近的顶点（解决“想拖顶点却拖了框”）
   const hitTestVertex = useCallback(
     (p: Point): { regionId: string; index: number } | null => {
-      if (!selectedId) return null;
-      const r = regions.find((it) => it.id === selectedId);
-      if (!r) return null;
-      const thr = 8 * getScale();
-      for (let i = 0; i < r.points.length; i += 1) {
-        if (Math.hypot(r.points[i].x - p.x, r.points[i].y - p.y) <= thr) return { regionId: r.id, index: i };
+      const canvas = canvasRef.current;
+      if (!canvas) return null;
+      const rect = canvas.getBoundingClientRect();
+      const thr = 11 * (canvas.width / rect.width); // 屏幕 ~11px 换算到图片坐标
+      let best: { regionId: string; index: number } | null = null;
+      let bestD = thr;
+      for (const r of regions) {
+        for (let i = 0; i < r.points.length; i += 1) {
+          const d = Math.hypot(r.points[i].x - p.x, r.points[i].y - p.y);
+          if (d <= bestD) {
+            bestD = d;
+            best = { regionId: r.id, index: i };
+          }
+        }
       }
-      return null;
+      return best;
     },
-    [regions, selectedId, getScale]
+    [regions]
   );
 
   const hitTestRegion = useCallback(
@@ -278,15 +436,59 @@ export default function FreeCutModal(props: FreeCutModalProps): JSX.Element {
   );
 
   const addRegion = useCallback((points: Point[]) => {
-    const id = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(Math.random());
+    const id =
+      typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(Math.random());
     setRegions((prev) => [...prev, { id, points }]);
     setSelectedId(id);
     setEdited(true);
   }, []);
 
+  // 右键单击动作：多边形绘制中撤销上一点；否则取消选中
+  const rightClickAction = useCallback(() => {
+    if (modeRef.current === "polygon" && polyDraftRef.current.length > 0) {
+      setPolyDraft((prev) => prev.slice(0, -1));
+      setMousePos(null);
+    } else {
+      setSelectedId(null);
+    }
+  }, []);
+
   const onMouseDown = useCallback(
     (e: React.MouseEvent) => {
-      const p = toImageCoords(e);
+      if (e.button === 2) {
+        // 右键：记录起点，由 window 监听完成平移 / 单击判定
+        e.preventDefault();
+        if (canvasRef.current) canvasRef.current.style.cursor = "grabbing";
+        panRef.current = {
+          x0: e.clientX,
+          y0: e.clientY,
+          tx0: viewRef.current.tx,
+          ty0: viewRef.current.ty,
+          moved: false
+        };
+        const move = (ev: MouseEvent) => {
+          const pan = panRef.current;
+          if (!pan) return;
+          const dx = ev.clientX - pan.x0;
+          const dy = ev.clientY - pan.y0;
+          if (Math.hypot(dx, dy) > 3) pan.moved = true;
+          setView((v) => ({ ...v, tx: pan.tx0 + dx, ty: pan.ty0 + dy }));
+        };
+        const up = (ev: MouseEvent) => {
+          window.removeEventListener("mousemove", move);
+          window.removeEventListener("mouseup", up);
+          const pan = panRef.current;
+          panRef.current = null;
+          if (canvasRef.current) canvasRef.current.style.cursor = "crosshair";
+          if (ev.button === 2 && pan && !pan.moved) rightClickAction();
+        };
+        window.addEventListener("mousemove", move);
+        window.addEventListener("mouseup", up);
+        return;
+      }
+      if (e.button !== 0) return; // 仅左键进入绘制逻辑
+      e.preventDefault();
+      const p = clientToImage(e);
       didDragRef.current = false;
       // 多边形绘制进行中：由 onClick 负责加点，这里不启动拖拽
       if (mode === "polygon" && polyDraft.length > 0) return;
@@ -294,12 +496,15 @@ export default function FreeCutModal(props: FreeCutModalProps): JSX.Element {
       const vtx = hitTestVertex(p);
       if (vtx) {
         actionRef.current = { kind: "vertex", regionId: vtx.regionId, index: vtx.index };
+        setSelectedId(vtx.regionId);
+        if (mode === "polygon") suppressClickRef.current = true;
         return;
       }
       const rid = hitTestRegion(p);
       if (rid) {
         actionRef.current = { kind: "move", regionId: rid, last: p };
         setSelectedId(rid);
+        if (mode === "polygon") suppressClickRef.current = true;
         return;
       }
       if (mode === "rect") {
@@ -307,12 +512,13 @@ export default function FreeCutModal(props: FreeCutModalProps): JSX.Element {
         setRectDraft({ start: p, current: p });
       }
     },
-    [mode, polyDraft.length, hitTestVertex, hitTestRegion, toImageCoords]
+    [mode, polyDraft.length, hitTestVertex, hitTestRegion, clientToImage, rightClickAction]
   );
 
   const onMouseMove = useCallback(
     (e: React.MouseEvent) => {
-      const p = toImageCoords(e);
+      if (panRef.current) return; // 右键平移中，交给 window 监听
+      const p = clientToImage(e);
       const action = actionRef.current;
       if (action?.kind === "rect") {
         didDragRef.current = true;
@@ -344,18 +550,23 @@ export default function FreeCutModal(props: FreeCutModalProps): JSX.Element {
         );
         return;
       }
+      // 无活动操作时更新悬停光标，提示是否可抓取顶点
       if (mode === "polygon" && polyDraft.length > 0) {
         setMousePos(p);
+      } else if (canvasRef.current) {
+        const hoverVtx = hitTestVertex(p);
+        canvasRef.current.style.cursor = hoverVtx ? "pointer" : mode === "polygon" ? "crosshair" : "crosshair";
       }
     },
-    [mode, polyDraft.length, toImageCoords]
+    [mode, polyDraft.length, clientToImage, hitTestVertex]
   );
 
   const onMouseUp = useCallback(
     (e: React.MouseEvent) => {
+      if (e.button !== 0) return; // 右键释放由 window 监听处理
       const action = actionRef.current;
       if (action?.kind === "rect") {
-        const cur = toImageCoords(e);
+        const cur = clientToImage(e);
         const moved = Math.hypot(cur.x - action.start.x, cur.y - action.start.y) > 4;
         if (moved) {
           const pts: Point[] = [
@@ -376,14 +587,18 @@ export default function FreeCutModal(props: FreeCutModalProps): JSX.Element {
       }
       actionRef.current = null;
     },
-    [toImageCoords, hitTestRegion]
+    [clientToImage, hitTestRegion]
   );
 
   const onClick = useCallback(
     (e: React.MouseEvent) => {
+      if (suppressClickRef.current) {
+        suppressClickRef.current = false;
+        return;
+      }
       if (mode !== "polygon") return;
       if (didDragRef.current) return; // 刚结束拖拽，不加点
-      const p = toImageCoords(e);
+      const p = clientToImage(e);
       if (polyDraft.length === 0) {
         // 空闲态：点中已有区域则选中，否则空白区首点作为多边形起点
         const rid = hitTestRegion(p);
@@ -401,12 +616,11 @@ export default function FreeCutModal(props: FreeCutModalProps): JSX.Element {
         return [...prev, p];
       });
     },
-    [mode, polyDraft.length, hitTestRegion, toImageCoords]
+    [mode, polyDraft.length, hitTestRegion, clientToImage]
   );
 
   const finalizePolygon = useCallback(() => {
     if (polyDraft.length >= 3) {
-      // 闭合后弹预览小窗，与矩形模式一致：保留 / 重画
       setPreviewRegion({ id: "preview", points: polyDraft });
     }
     setPolyDraft([]);
@@ -460,17 +674,14 @@ export default function FreeCutModal(props: FreeCutModalProps): JSX.Element {
     }
   }, [regions, input, gridImagePath, runId, t, onExported]);
 
-  const deleteRegion = useCallback(
-    (id: string) => {
-      setRegions((prev) => prev.filter((r) => r.id !== id));
-      setSelectedId((cur) => (cur === id ? null : cur));
-      setEdited(true);
-    },
-    []
-  );
+  const deleteRegion = useCallback((id: string) => {
+    setRegions((prev) => prev.filter((r) => r.id !== id));
+    setSelectedId((cur) => (cur === id ? null : cur));
+    setEdited(true);
+  }, []);
 
   return (
-    <div className="modalOverlay" onClick={onClose}>
+    <div className="modalOverlay">
       <div className="freeCutModal" onClick={(e) => e.stopPropagation()}>
         <div className="freeCutHeader">
           <h3>
@@ -516,20 +727,30 @@ export default function FreeCutModal(props: FreeCutModalProps): JSX.Element {
         <div className="freeCutBody">
           <div className="freeCutCanvasWrap">
             {imgSize.w > 0 && (
-              <div className="freeCutStage" style={{ aspectRatio: `${imgSize.w} / ${imgSize.h}` }}>
-                <img src={gridDataUrl} alt="grid" draggable={false} />
-                <canvas
-                  ref={canvasRef}
-                  width={imgSize.w}
-                  height={imgSize.h}
-                  className="freeCutCanvas"
-                  onMouseDown={onMouseDown}
-                  onMouseMove={onMouseMove}
-                  onMouseUp={onMouseUp}
-                  onClick={onClick}
-                  onDoubleClick={mode === "polygon" ? finalizePolygon : undefined}
-                  onMouseLeave={() => setMousePos(null)}
-                />
+              <div className="freeCutStage" ref={stageRef} onContextMenu={(e) => e.preventDefault()}>
+                <div
+                  className="freeCutStageInner"
+                  ref={innerRef}
+                  style={{
+                    transform: `translate(${view.tx}px, ${view.ty}px) scale(${view.scale})`,
+                    width: bitmapW,
+                    height: bitmapH
+                  }}
+                >
+                  <canvas
+                    ref={canvasRef}
+                    width={bitmapW}
+                    height={bitmapH}
+                    className="freeCutCanvas"
+                    onMouseDown={onMouseDown}
+                    onMouseMove={onMouseMove}
+                    onMouseUp={onMouseUp}
+                    onClick={onClick}
+                    onDoubleClick={mode === "polygon" ? finalizePolygon : undefined}
+                    onMouseLeave={() => setMousePos(null)}
+                  />
+                </div>
+                <div className="freeCutZoomBadge">{Math.round(view.scale * 100)}%</div>
               </div>
             )}
             <div className="freeCutHint">
@@ -538,11 +759,6 @@ export default function FreeCutModal(props: FreeCutModalProps): JSX.Element {
                 : polyDraft.length > 0
                   ? t("freecut.polygonDrawingHint", { n: polyDraft.length })
                   : t("freecut.polygonHint")}
-              {mode === "polygon" && polyDraft.length > 0 && (
-                <button className="freeCutClosePolygon" onClick={finalizePolygon}>
-                  <Check size={13} /> {t("freecut.closePolygon")}
-                </button>
-              )}
             </div>
           </div>
 
@@ -557,9 +773,11 @@ export default function FreeCutModal(props: FreeCutModalProps): JSX.Element {
                   key={r.id}
                   img={imgRef.current}
                   points={r.points}
+                  index={i}
                   selected={r.id === selectedId}
                   onSelect={() => setSelectedId(r.id)}
                   onDelete={() => deleteRegion(r.id)}
+                  onZoom={() => setLightbox({ points: r.points, index: i })}
                 />
               ))}
             </div>
@@ -573,22 +791,42 @@ export default function FreeCutModal(props: FreeCutModalProps): JSX.Element {
           <div className="freeCutPopup" onClick={(e) => e.stopPropagation()}>
             <div className="freeCutPopupTitle">{t("freecut.cropPreview")}</div>
             <canvas
-              width={200}
-              height={200}
+              width={220}
+              height={220}
               ref={(el) => {
                 if (el && imgRef.current) drawCrop(el, imgRef.current, previewRegion.points);
               }}
             />
             <div className="freeCutPopupActions">
-              <button className="primaryButton" onClick={() => {
-                addRegion(previewRegion.points);
-                setPreviewRegion(null);
-              }}>
+              <button
+                className="primaryButton"
+                onClick={() => {
+                  addRegion(previewRegion.points);
+                  setPreviewRegion(null);
+                }}
+              >
                 <Check size={14} /> {t("freecut.keep")}
               </button>
               <button className="ghostButton" onClick={() => setPreviewRegion(null)}>
                 <RefreshCw size={14} /> {t("freecut.redraw")}
               </button>
+            </div>
+          </div>
+        )}
+
+        {lightbox && (
+          <div className="freeCutLightbox" onClick={() => setLightbox(null)}>
+            <div className="freeCutLightboxInner" onClick={(e) => e.stopPropagation()}>
+              <canvas
+                width={460}
+                height={460}
+                ref={(el) => {
+                  if (el && imgRef.current) drawCrop(el, imgRef.current, lightbox.points);
+                }}
+              />
+              <div className="freeCutLightboxCap">
+                {t("freecut.preview")} #{lightbox.index + 1} · {t("freecut.lightboxClose")}
+              </div>
             </div>
           </div>
         )}

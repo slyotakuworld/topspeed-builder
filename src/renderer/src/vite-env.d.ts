@@ -6,6 +6,7 @@ declare const __APP_BUILD_TS__: string;
 import type {
   AppSettings,
   CreateProjectInput,
+  FreeCutData,
   GenerateAssetInput,
   GeneratedAssetResult,
   GenerationHistoryEntry,
@@ -13,6 +14,7 @@ import type {
   GridSliceOptions,
   ImportedReferenceImage,
   IpcResponse,
+  ManualRegion,
   Project,
   RecentProject
 } from "@shared/types";
@@ -45,6 +47,29 @@ declare global {
         gridImagePath: string,
         count: number
       ): Promise<IpcResponse<GridAutoCell[] | null>>;
+      freecutLoad(
+        projectPath: string,
+        gridImagePath: string,
+        count: number,
+        runId: string
+      ): Promise<IpcResponse<FreeCutData>>;
+      freecutSave(
+        projectPath: string,
+        gridImagePath: string,
+        data: FreeCutData
+      ): Promise<IpcResponse<boolean>>;
+      freecutRestore(
+        projectPath: string,
+        gridImagePath: string,
+        count: number,
+        runId: string
+      ): Promise<IpcResponse<FreeCutData>>;
+      freecutExport(
+        input: GenerateAssetInput,
+        gridImagePath: string,
+        runId: string,
+        regions: ManualRegion[]
+      ): Promise<IpcResponse<GeneratedAssetResult>>;
       copyPng(projectPath: string): Promise<IpcResponse<string>>;
       listGenerationHistory(projectPath: string): Promise<IpcResponse<GenerationHistoryEntry[]>>;
       removeGenerationHistory(projectPath: string, runId: string): Promise<IpcResponse<boolean>>;

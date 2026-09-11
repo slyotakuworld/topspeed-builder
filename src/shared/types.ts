@@ -130,6 +130,28 @@ export interface GridAutoCell {
   height: number;
 }
 
+/**
+ * 自由切图：一个由多边形顶点定义的裁剪区域（像素坐标，相对于网格大图）。
+ * 矩形即 4 顶点多边形（左上→右上→右下→左下），与多边形统一用点集表示，
+ * 支持「定点精修」——拖动任意顶点即可微调形状，无需重新勾线。
+ */
+export interface ManualRegion {
+  id: string;
+  /** 多边形顶点，按勾画顺序闭合（首尾自动连线） */
+  points: Array<{ x: number; y: number }>;
+  /** 可选：该区域的素材名（用于导出文件名），缺省回退到序号或表单 cellNames */
+  name?: string;
+}
+
+/** 自由切图缓存：与某次生成 run 绑定，独立存储，不覆盖智能对齐、也不影响正常切分导出 */
+export interface FreeCutData {
+  runId: string;
+  regions: ManualRegion[];
+  /** 数据来源：auto = 由智能对齐检测结果初始化；manual = 用户手动编辑 / 新建 */
+  source: "auto" | "manual";
+  updatedAt: string;
+}
+
 /** generate:grid 产出的“大图草稿”，等待用户在界面确认切分参数后提交 */
 export interface GridDraft {
   runId: string;

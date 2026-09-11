@@ -2,9 +2,12 @@ import { contextBridge, ipcRenderer } from "electron";
 import type {
   AppSettings,
   CreateProjectInput,
+  FreeCutData,
   GenerateAssetInput,
+  GeneratedAssetResult,
   GridDraft,
   GridSliceOptions,
+  ManualRegion,
   Project
 } from "@shared/types";
 
@@ -25,6 +28,14 @@ contextBridge.exposeInMainWorld("topspeedBuilder", {
     ipcRenderer.invoke("generate:commit", input, draft, options),
   detectAutoCells: (projectPath: string, gridImagePath: string, count: number) =>
     ipcRenderer.invoke("grid:detectAutoCells", projectPath, gridImagePath, count),
+  freecutLoad: (projectPath: string, gridImagePath: string, count: number, runId: string) =>
+    ipcRenderer.invoke("freecut:load", projectPath, gridImagePath, count, runId),
+  freecutSave: (projectPath: string, gridImagePath: string, data: FreeCutData) =>
+    ipcRenderer.invoke("freecut:save", projectPath, gridImagePath, data),
+  freecutRestore: (projectPath: string, gridImagePath: string, count: number, runId: string) =>
+    ipcRenderer.invoke("freecut:restore", projectPath, gridImagePath, count, runId),
+  freecutExport: (input: GenerateAssetInput, gridImagePath: string, runId: string, regions: ManualRegion[]) =>
+    ipcRenderer.invoke("freecut:export", input, gridImagePath, runId, regions),
   copyPng: (projectPath: string) => ipcRenderer.invoke("export:copyPng", projectPath),
   listGenerationHistory: (projectPath: string) => ipcRenderer.invoke("history:list", projectPath),
   removeGenerationHistory: (projectPath: string, runId: string) =>

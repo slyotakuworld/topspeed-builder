@@ -16,6 +16,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Scissors,
   Settings,
   Sparkles,
   Trash2,
@@ -39,6 +40,7 @@ import type {
   ReferenceImageRole,
   ReferenceStrength
 } from "@shared/types";
+import FreeCutModal from "./FreeCutModal";
 
 type Page = "home" | "generate" | "assets" | "settings";
 type DetailTemplate = { id: string; name: string; prompt: string; meta: string };
@@ -664,6 +666,7 @@ function GeneratePage(props: {
 
   const [draft, setDraft] = useState<GridDraft | null>(null);
   const [gridDataUrl, setGridDataUrl] = useState("");
+  const [freeCutOpen, setFreeCutOpen] = useState(false);
   const [sliceCols, setSliceCols] = useState(0);
   const [sliceRows, setSliceRows] = useState(0);
   // 内容感知切分（默认开启；仅多格 + 透明背景时生效，检测失败自动退回等分）
@@ -1196,6 +1199,16 @@ function GeneratePage(props: {
                     value={autoAlign}
                     onChange={setAutoAlign}
                   />
+                  <button
+                    type="button"
+                    className="ghostButton freeCutEntry"
+                    disabled={!draft}
+                    title={draft ? t("freecut.title") : ""}
+                    onClick={() => draft && setFreeCutOpen(true)}
+                  >
+                    <Scissors size={14} />
+                    {t("freecut.title")}
+                  </button>
                   {!autoPreviewCells && (
                     <>
                       <SelectInput
@@ -1235,6 +1248,23 @@ function GeneratePage(props: {
                   <div className="inlineNote compactNote">{t("generate.sliceHint")}</div>
                 )}
               </div>
+            )}
+
+            {freeCutOpen && draft && (
+              <FreeCutModal
+                projectPath={props.project.path}
+                gridImagePath={draft.gridImagePath}
+                runId={draft.runId}
+                count={draft.count}
+                input={buildInput()}
+                gridDataUrl={gridDataUrl}
+                onClose={() => setFreeCutOpen(false)}
+                onExported={(result) => {
+                  setRestoredCommitted({ kind: "committed", files: result.files });
+                  void props.onCommitted();
+                  props.onHistoryChanged();
+                }}
+              />
             )}
 
             {/* 本批次产出的图片/文字信息：始终放列表最下面 */}

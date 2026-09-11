@@ -6,11 +6,13 @@ import type { Raw } from "sharp";
 import type {
   Asset,
   AssetType,
+  FreeCutData,
   GenerateAssetInput,
   GeneratedAssetResult,
   GridAutoCell,
   GridDraft,
   GridSliceOptions,
+  ManualRegion,
   Project,
   ReferenceImageInput,
   ReferenceImageRole,
@@ -431,6 +433,273 @@ export class GenerationService {
       }
     }
     return sharp(data, { raw: { width: cellW, height: cellH, channels: channels as Raw["channels"] } })
+      .png()
+      .toBuffer();
+  }
+
+  // ---- 自由切图：独立于智能对齐与正常导出，按用户手绘多边形切分 ----
+
+  /** 自由切图侧车缓存路径：与网格大图同目录，文件名固定 freecut.json */
+  private freeCutSidecarPath(projectPath: string, gridImagePath: string): string {
+    const absolute = resolveProjectPath(projectPath, gridImagePath);
+    return path.join(path.dirname(absolute), "freecut.json");
+  }
+
+  /** 从智能对齐检测结果初始化自由切图数据：每个包围盒转成 4 顶点多边形 */
+  private autoCellsToFreeCut(runId: string, cells: GridAutoCell[] | null): FreeCutData {
+    const regions: ManualRegion[] = (cells ?? []).map((cell) => ({
+      id: randomUUID(),
+      points: [
+        { x: cell.left, y: cell.top },
+        { x: cell.left + cell.width, y: cell.top },
+        { x: cell.left + cell.width, y: cell.top + cell.height },
+        { x: cell.left, y: cell.top + cell.height }
+      ]
+    }));
+    return { runId, regions, source: "auto", updatedAt: nowIso() };
+  }
+
+  /**
+   * 载入某 run 的自由切图数据。
+   * 已有缓存则返回缓存；否则回退到智能对齐检测（detectAutoCells）把结果转成多边形作为初始数据，
+   * 实现「第一次打开默认就是智能对齐的切图数据」。
+   */
+  async loadFreeCut(
+    projectPath: string,
+    gridImagePath: string,
+    count: number,
+    runId: string
+  ): Promise<FreeCutData> {
+    const sidecar = this.freeCutSidecarPath(projectPath, gridImagePath);
+    if (await fs.pathExists(sidecar)) {
+      try {
+        const cached = await fs.readJson(sidecar);
+        if (cached && Array.isArray(cached.regions)) return cached as FreeCutData;
+      } catch {
+        // 损坏则忽略，走下方重新检测
+      }
+    }
+    const buffer = await fs.readFile(resolveProjectPath(projectPath, gridImagePath));
+    const cells = count > 1 ? await this.imageService.detectAutoCells(buffer, count) : null;
+    return this.autoCellsToFreeCut(runId, cells);
+  }
+
+  /** 保存自由切图数据到侧车缓存（覆盖写） */
+  async saveFreeCut(projectPath: string, gridImagePath: string, data: FreeCutData): Promise<void> {
+    const sidecar = this.freeCutSidecarPath(projectPath, gridImagePath);
+    await fs.ensureDir(path.dirname(sidecar));
+    await fs.writeJson(sidecar, { ...data, updatedAt: nowIso() }, { spaces: 2 });
+  }
+
+  /** 还原成智能对齐数据：重新跑检测、覆盖缓存并返回 */
+  async restoreFreeCut(
+    projectPath: string,
+    gridImagePath: string,
+    count: number,
+    runId: string
+  ): Promise<FreeCutData> {
+    const buffer = await fs.readFile(resolveProjectPath(projectPath, gridImagePath));
+    const cells = count > 1 ? await this.imageService.detectAutoCells(buffer, count) : null;
+    const data = this.autoCellsToFreeCut(runId, cells);
+    await this.saveFreeCut(projectPath, gridImagePath, data);
+    return data;
+  }
+
+  /**
+   * 按用户多边形区域切分并导出精灵 PNG（与正常导出独立，仅在本界面调用）。
+   * 每个区域：取顶点 bbox 从大图裁出，再用多边形蒙版把框外像素置透明，最后走透明/trim 与正常切图一致。
+   */
+  async sliceManualRegions(
+    input: GenerateAssetInput,
+    gridImagePath: string,
+    runId: string,
+    regions: ManualRegion[]
+  ): Promise<GeneratedAssetResult> {
+    const project = await this.projectService.openProjectPath(input.projectPath);
+    const absoluteGrid = resolveProjectPath(input.projectPath, gridImagePath);
+    if (!(await fs.pathExists(absoluteGrid))) {
+      throw new Error(`网格大图不存在，请重新生成：${gridImagePath}`);
+    }
+    const buffer = await fs.readFile(absoluteGrid);
+    const image = sharp(buffer).ensureAlpha();
+    const info = await image.metadata();
+    const width = info.width ?? 0;
+    const height = info.height ?? 0;
+    const logs: string[] = [];
+
+    const assetName = sanitizeFileName(input.name || input.assetType);
+    const storageName = this.storageName(assetName, runId);
+    const outputDirectory = path.join(project.path, "sprites", storageName);
+    const files: string[] = [];
+    const cropResults: Array<{ index: number; name: string; width: number; height: number }> = [];
+
+    const validRegions = regions.filter(
+      (region) => Array.isArray(region.points) && region.points.length >= 3
+    );
+
+    for (let index = 0; index < validRegions.length; index += 1) {
+      const region = validRegions[index];
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const p of region.points) {
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y > maxY) maxY = p.y;
+      }
+      const startX = this.clampInt(Math.round(minX), 0, width - 1);
+      const endX = this.clampInt(Math.round(maxX), startX + 1, width);
+      const startY = this.clampInt(Math.round(minY), 0, height - 1);
+      const endY = this.clampInt(Math.round(maxY), startY + 1, height);
+      const cellW = endX - startX;
+      const cellH = endY - startY;
+      if (cellW < 2 || cellH < 2) {
+        logs.push(`自由切图跳过 #${index + 1}：区域过小。`);
+        continue;
+      }
+      try {
+        let cellBuffer = await image
+          .clone()
+          .extract({ left: startX, top: startY, width: cellW, height: cellH })
+          .png()
+          .toBuffer();
+        const localPoints = region.points.map((p) => ({ x: p.x - startX, y: p.y - startY }));
+        cellBuffer = await this.applyPolygonMask(cellBuffer, localPoints, cellW, cellH);
+        if (input.transparentBackground) {
+          cellBuffer = await this.imageService.removeBackground(cellBuffer);
+        }
+        if (input.trimEdges) {
+          cellBuffer = await this.imageService.trimToContent(cellBuffer);
+        }
+        const cellName =
+          region.name?.trim() ||
+          input.cellNames?.[index]?.trim() ||
+          `${input.name || "asset"} ${index + 1}`;
+        const slug = sanitizeFileName(cellName);
+        const fileName = `${String(index + 1).padStart(2, "0")}_${slug}.png`;
+        const outputPath = path.join(outputDirectory, fileName);
+        await fs.ensureDir(path.dirname(outputPath));
+        await fs.writeFile(outputPath, cellBuffer);
+        const cellMeta = await sharp(cellBuffer).metadata();
+        cropResults.push({ index, name: cellName, width: cellMeta.width ?? 0, height: cellMeta.height ?? 0 });
+        files.push(toRelative(project.path, outputPath));
+        logs.push(`自由切图素材 ${index + 1}/${validRegions.length}: ${outputPath}`);
+      } catch (error) {
+        logs.push(`自由切图失败 #${index + 1}: ${this.formatError(error)}`);
+      }
+    }
+
+    if (files.length === 0) {
+      throw new Error(`自由切图失败，没有成功输出。日志：${logs.join(" | ")}`);
+    }
+
+    const maxCellW = cropResults.reduce((max, item) => Math.max(max, item.width), 0);
+    const maxCellH = cropResults.reduce((max, item) => Math.max(max, item.height), 0);
+    const size = { width: Math.max(1, maxCellW), height: Math.max(1, maxCellH) };
+    const metadataPath = path.join(outputDirectory, `${storageName}_metadata.json`);
+    const previousHistory = await this.historyService.get(project.path, runId);
+    const prompt = previousHistory?.prompt ?? input.description ?? input.detailPrompt ?? "";
+    await writeJsonFile(metadataPath, {
+      name: input.name,
+      type: input.assetType,
+      style: this.resolveBatchStyle(project, input),
+      description: input.description,
+      detailPrompt: (input.detailPrompt || "").trim(),
+      size,
+      grid: {
+        cols: 0,
+        rows: 0,
+        lastRowCols: 0,
+        count: validRegions.length,
+        imageWidth: width,
+        imageHeight: height,
+        shiftX: 0,
+        shiftY: 0,
+        shrinkPercent: 0,
+        mode: "freecut"
+      },
+      files,
+      cells: cropResults,
+      prompt,
+      createdAt: nowIso()
+    });
+
+    const asset = this.createAsset(input, {
+      id: runId,
+      project,
+      files,
+      metadataPath: toRelative(project.path, metadataPath),
+      size,
+      prompt
+    });
+
+    await this.persistResult(project, asset, logs, files);
+
+    await this.historyService.upsert(project.path, {
+      runId,
+      status: "committed",
+      createdAt: previousHistory?.createdAt ?? nowIso(),
+      committedAt: nowIso(),
+      input,
+      grid: {
+        cols: 0,
+        rows: 0,
+        width,
+        height,
+        count: validRegions.length,
+        gridImagePath,
+        autoCells: undefined
+      },
+      prompt,
+      logs: [...(previousHistory?.logs ?? []), ...logs],
+      slice: { cols: 0, rows: 0, lastRowCols: 0, shiftX: 0, shiftY: 0, shrinkPercent: 0, useAuto: false },
+      assetId: asset.id,
+      files: [...files],
+      metadataPath: asset.metadataPath
+    });
+
+    return {
+      asset,
+      files,
+      metadataPath: asset.metadataPath,
+      gridImagePath,
+      logs
+    };
+  }
+
+  /** 射线法判断点是否在多边形内（顶点为本地坐标） */
+  private pointInPolygon(px: number, py: number, poly: Array<{ x: number; y: number }>): boolean {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const xi = poly[i].x;
+      const yi = poly[i].y;
+      const xj = poly[j].x;
+      const yj = poly[j].y;
+      const intersect = yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi;
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+
+  /** 多边形蒙版：把单格裁图里落在多边形外的像素置透明（多边形顶点已转成本地坐标） */
+  private async applyPolygonMask(
+    cellBuffer: Buffer,
+    localPoints: Array<{ x: number; y: number }>,
+    cW: number,
+    cH: number
+  ): Promise<Buffer> {
+    const { data, info } = await sharp(cellBuffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const channels = info.channels;
+    for (let y = 0; y < cH; y += 1) {
+      for (let x = 0; x < cW; x += 1) {
+        if (!this.pointInPolygon(x + 0.5, y + 0.5, localPoints)) {
+          data[(y * cW + x) * channels + 3] = 0;
+        }
+      }
+    }
+    return sharp(data, { raw: { width: cW, height: cH, channels: channels as Raw["channels"] } })
       .png()
       .toBuffer();
   }

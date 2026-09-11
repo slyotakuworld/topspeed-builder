@@ -2479,3 +2479,196 @@ button { color: inherit; }
   .genHistoryDetail { grid-template-columns: 1fr; }
   .genHistoryImg img { width: 100%; }
 }
+
+/* ---- 自由切图弹窗 ---- */
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.freeCutModal {
+  width: min(94vw, 1100px);
+  max-height: 90vh;
+  background: var(--color-background-primary, #fff);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+}
+.freeCutHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border-tertiary, rgba(0, 0, 0, 0.12));
+}
+.freeCutHeader h3 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 500;
+}
+.freeCutClose {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--color-text-secondary, #666);
+  border-radius: 6px;
+  padding: 4px;
+  display: flex;
+}
+.freeCutClose:hover { background: rgba(0, 0, 0, 0.06); }
+.freeCutToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--color-border-tertiary, rgba(0, 0, 0, 0.12));
+  flex-wrap: wrap;
+}
+.freeCutModes { display: flex; gap: 8px; }
+.freeCutModeBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--color-border-secondary, rgba(0, 0, 0, 0.3));
+  background: transparent;
+  border-radius: 7px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--color-text-primary, #111);
+}
+.freeCutModeBtn.active {
+  background: var(--color-background-info, #e6f1fb);
+  border-color: var(--color-border-info, #185fa5);
+  color: var(--color-text-info, #185fa5);
+}
+.freeCutActions { display: flex; gap: 8px; }
+.freeCutBody {
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  overflow: auto;
+  min-height: 0;
+}
+.freeCutCanvasWrap { flex: 1 1 auto; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.freeCutStage {
+  position: relative;
+  width: 100%;
+  max-height: 64vh;
+  background:
+    repeating-conic-gradient(#eee 0% 25%, #fff 0% 50%) 50% / 20px 20px;
+  border: 1px solid var(--color-border-tertiary, rgba(0, 0, 0, 0.12));
+  border-radius: 8px;
+  overflow: hidden;
+}
+.freeCutStage img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.freeCutCanvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  cursor: crosshair;
+}
+.freeCutHint {
+  font-size: 12px;
+  color: var(--color-text-secondary, #666);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.freeCutClosePolygon {
+  border: 1px solid var(--color-border-info, #185fa5);
+  background: var(--color-background-info, #e6f1fb);
+  color: var(--color-text-info, #185fa5);
+  border-radius: 6px;
+  padding: 3px 10px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+.freeCutPreviewPane {
+  flex: 0 0 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-left: 1px solid var(--color-border-tertiary, rgba(0, 0, 0, 0.12));
+  padding-left: 16px;
+  min-width: 0;
+}
+.freeCutPreviewHead { font-size: 13px; font-weight: 500; }
+.freeCutThumbList {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  overflow: auto;
+  align-content: start;
+}
+.freeCutThumb {
+  position: relative;
+  border: 2px solid var(--color-border-tertiary, rgba(0, 0, 0, 0.12));
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  background: #fff;
+}
+.freeCutThumb.selected { border-color: #ff4d4f; }
+.freeCutThumb canvas { display: block; width: 100%; height: auto; }
+.freeCutThumbDel {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  border: none;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  border-radius: 5px;
+  padding: 3px;
+  cursor: pointer;
+  display: flex;
+}
+.freeCutThumbDel:hover { background: #ff4d4f; }
+.freeCutEmpty { font-size: 12px; color: var(--color-text-tertiary, #999); padding: 12px 0; }
+.freeCutPreviewIndex { font-size: 11px; color: var(--color-text-tertiary, #999); }
+.freeCutMsg {
+  margin: 0 16px 12px;
+  padding: 8px 12px;
+  border-radius: 7px;
+  background: var(--color-background-tertiary, #f1efe8);
+  font-size: 13px;
+  color: var(--color-text-primary, #111);
+}
+.freeCutPopup {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--color-background-primary, #fff);
+  border: 1px solid var(--color-border-secondary, rgba(0, 0, 0, 0.3));
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25);
+  z-index: 1001;
+}
+.freeCutPopupTitle { font-size: 13px; font-weight: 500; }
+.freeCutPopup canvas { border: 1px solid var(--color-border-tertiary, rgba(0, 0, 0, 0.12)); border-radius: 6px; background:
+    repeating-conic-gradient(#eee 0% 25%, #fff 0% 50%) 50% / 16px 16px; }
+.freeCutPopupActions { display: flex; gap: 8px; }
+.freeCutEntry { display: inline-flex; align-items: center; gap: 6px; }
+

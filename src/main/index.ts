@@ -4,10 +4,12 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import type {
   AppSettings,
   CreateProjectInput,
+  FreeCutData,
   GenerateAssetInput,
   GridDraft,
   GridSliceOptions,
   IpcResponse,
+  ManualRegion,
   Project
 } from "@shared/types";
 import { AIGenerationService } from "./services/aiService";
@@ -132,6 +134,22 @@ function registerIpc(): void {
     if (!(await fs.pathExists(absolutePath))) return null;
     return imageService.detectAutoCells(await fs.readFile(absolutePath), count);
   });
+  // 自由切图：独立于智能对齐与正常导出。load 无缓存时回退智能对齐结果作为初始数据；
+  // restore 重新跑检测覆盖缓存；export 按用户多边形区域裁切并入库。
+  handle("freecut:load", (projectPath: string, gridImagePath: string, count: number, runId: string) =>
+    generationService.loadFreeCut(projectPath, gridImagePath, count, runId)
+  );
+  handle("freecut:save", (projectPath: string, gridImagePath: string, data: FreeCutData) =>
+    generationService.saveFreeCut(projectPath, gridImagePath, data)
+  );
+  handle("freecut:restore", (projectPath: string, gridImagePath: string, count: number, runId: string) =>
+    generationService.restoreFreeCut(projectPath, gridImagePath, count, runId)
+  );
+  handle(
+    "freecut:export",
+    (input: GenerateAssetInput, gridImagePath: string, runId: string, regions: ManualRegion[]) =>
+      generationService.sliceManualRegions(input, gridImagePath, runId, regions)
+  );
   handle("history:list", (projectPath: string) => historyService.list(projectPath));
   handle("history:remove", (projectPath: string, runId: string) => historyService.remove(projectPath, runId));
   handle("history:saveSnapshot", (projectPath: string, runId: string | null, input: GenerateAssetInput) =>

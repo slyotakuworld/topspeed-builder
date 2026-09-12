@@ -41,14 +41,26 @@ npm run typecheck # TypeScript 类型检查
 npm run build     # 构建到 build/out/
 ```
 
-打包安装包（应用图标位于 `assets/`，重新生成：`make-icons.cmd [自定义图片路径] [输出目录]`，均可在运行时交互输入；不传图则使用内置默认图案，不传目录则保存到 `assets/`；自定义图建议 1024x1024 透明背景 PNG）：
+打包绿色版（应用图标位于 `assets/`；只产出免安装目录，不生成安装器）：
 
 ```bash
-npm run dist:win       # Windows NSIS 安装包，输出到 build/release/
-npm run dist:mac:arm64 # Apple Silicon DMG/ZIP
-npm run dist:mac:x64   # Intel Mac DMG/ZIP
-npm run dist:linux     # AppImage / deb
+npm run pack:win      # Windows 绿色版，输出到 build/release/win-unpacked/
+npm run dist:mac      # macOS
+npm run dist:linux    # Linux AppImage / deb
 ```
+
+`build/release/win-unpacked/` 整个目录即可直接分发，无需安装器。
+
+## CLI 与 MCP
+
+打包绿色版时，`tool/` 子目录会自动带上 CLI 与 MCP（`scripts/before-pack.cjs` 在打包前构建）：
+
+| 启动器 | 作用 |
+|---|---|
+| `tool\topspeed-cli.cmd` | 命令行出图（生成网格大图 + 智能切分入库），双击显示帮助 |
+| `tool\topspeed-mcp.cmd` | 启动 HTTP MCP 服务（默认 `http://127.0.0.1:3000/mcp`），供 IDE / Agent 客户端连接 |
+
+两者复用应用自带的 Electron 运行时（`ELECTRON_RUN_AS_NODE=1`），目标机器**无需安装 Node.js**；依赖从 `resources/app.asar` 内解析（含 sharp）。接口配置与 GUI 共用 `%APPDATA%\topspeed-builder\settings.json`，修改 GUI 设置后重跑 CLI / 重启 MCP 即生效（也可用环境变量 `TOPSPEED_USER_DATA` 指向独立配置目录）。`--project` 指向的项目需已存在（先用 GUI 创建）。
 
 macOS 公开发布需使用 Developer ID 证书签名并通过 Apple 公证：配置 `CSC_LINK`、`CSC_KEY_PASSWORD`、`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID` 后，运行 `npm run dist:mac:signed:*` 即可。
 

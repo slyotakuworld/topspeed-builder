@@ -1,6 +1,5 @@
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { dialog } from "electron";
 import fs from "fs-extra";
 import sharp from "sharp";
 import type { ImportedReferenceImage } from "@shared/types";
@@ -14,8 +13,28 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   ".webp": "image/webp"
 };
 
+type ElectronDialog = (typeof import("electron"))["dialog"];
+
+/**
+ * 按需加载 Electron 的 dialog。
+ * 本服务被 GUI / MCP / CLI 三条入口共用，后两者跑在纯 Node（或 ELECTRON_RUN_AS_NODE）下，
+ * 运行时并不存在 electron 模块 —— 若在模块顶层 import，CLI / MCP 会启动即崩。
+ */
+async function loadElectronDialog(): Promise<ElectronDialog> {
+  try {
+    const mod = (await import("electron")) as Partial<typeof import("electron")>;
+    if (mod.dialog?.showOpenDialog) return mod.dialog;
+  } catch {
+    /* 掉到下方统一报错 */
+  }
+  throw new Error(
+    "当前运行环境没有图形界面，无法打开系统文件选择框。CLI / MCP 请改用 --reference <图片路径> 指定参考图，或在 GUI 中导入。"
+  );
+}
+
 export class ReferenceService {
   async chooseReferenceImages(projectPath: string): Promise<ImportedReferenceImage[]> {
+    const dialog = await loadElectronDialog();
     const result = await dialog.showOpenDialog({
       title: "选择参考图",
       filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp"] }],

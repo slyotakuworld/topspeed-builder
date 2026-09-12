@@ -3,7 +3,7 @@
  *  1) 结果不变 —— 合成一张 16 格的网格大图（已知每格的精确包围盒），重构后仍应原样返回；
  *  2) 主进程不再被一口气堵死 —— 检测期间事件循环必须能穿插跑别的任务（否则 Windows 上表现为输入框打不出字）。
  *
- * 跑法：npx esbuild scripts/verify-autocells-yield.ts --bundle --platform=node --format=cjs \
+ * 跑法：npx esbuild tests/verify-autocells-yield.ts --bundle --platform=node --format=cjs \
  *        --external:sharp --outfile=build/tmp-verify-autocells.cjs && node build/tmp-verify-autocells.cjs
  */
 import sharp from "sharp";

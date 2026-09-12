@@ -8,10 +8,9 @@
   "scripts": {
     "dev": "electron-vite dev",
     "dev:renderer": "electron-vite --rendererOnly",
-    "make-icons": "node make-icons.mjs",
     "build": "npm run typecheck && electron-vite build",
     "dist": "npm run build && electron-builder --publish never",
-    "dist:win": "npm run build && electron-builder --win --publish never",
+    "pack:win": "npm run build && electron-builder --win --dir --publish never",
     "dist:mac": "npm run build && electron-builder --mac --publish never",
     "dist:mac:arm64": "npm run build && electron-builder --mac --arm64 --publish never",
     "dist:mac:x64": "npm run build && electron-builder --mac --x64 --publish never",
@@ -29,31 +28,31 @@
     "directories": {
       "output": "build/release"
     },
+    "electronDownload": {
+      "mirror": "https://npmmirror.com/mirrors/electron/"
+    },
+    "beforePack": "scripts/before-pack.cjs",
     "files": [
       "build/out/**/*"
+    ],
+    "extraFiles": [
+      {
+        "from": "build/extra",
+        "to": "tool"
+      },
+      {
+        "from": "tools",
+        "to": "tool"
+      }
     ],
     "asarUnpack": [
       "node_modules/sharp/**/*"
     ],
     "win": {
       "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
+        "dir"
       ],
       "icon": "assets/icon.ico"
-    },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "Topspeed Builder",
-      "unicode": true
     },
     "mac": {
       "target": [

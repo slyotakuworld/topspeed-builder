@@ -6,7 +6,7 @@
  *  4) 地址 / 模型等字符串被 trim；
  *  5) 出图配置与提示词助手配置互不覆盖（同一文件两个子键）。
  *
- * 运行：npx esbuild scripts/verify-pa-settings-normalize.ts --bundle --platform=node \
+ * 运行：npx esbuild tests/verify-pa-settings-normalize.ts --bundle --platform=node \
  *        --format=cjs --outfile=build/tmp-verify-pa-norm.cjs && node build/tmp-verify-pa-norm.cjs
  */
 import fs from "fs-extra";

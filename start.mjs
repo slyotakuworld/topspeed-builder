@@ -89,7 +89,7 @@ function showMenu() {
   log('  1) 安装依赖并启动开发模式 (Electron 窗口)');
   log('  2) 仅安装依赖（不启动）');
   log('  3) 安装依赖并构建 (npm run build)');
-  log('  4) 安装依赖并打包绿色版 (npm run pack:win) —— 含 CLI / MCP，整目录可直接分享');
+  log('  4) 安装依赖并打包 Windows 版 (npm run pack:win) —— 产出绿色版目录 + 安装包 exe，均含 CLI / MCP');
   log('  5) 退出');
   log(c('================================================', 'cyan'));
   log('  提示：直接回车默认执行 1)；开发模式下会直接打开桌面应用窗口，无需打开浏览器。');
@@ -159,11 +159,12 @@ async function main() {
       }
       case '4': {
         if (!(await installDeps(force))) return;
-        log(c('打包绿色版 (npm run pack:win)，首次运行需下载 Electron 二进制，可能较久...', 'cyan'));
+        log(c('打包 Windows 版 (npm run pack:win)，首次运行需下载 Electron 二进制，可能较久...', 'cyan'));
         const code = await run('npm', ['run', 'pack:win']);
         if (code === 0) {
-          log(c('打包完成：build/release/win-unpacked/', 'green'));
-          log(c('该目录已自带 tool/（CLI 与 MCP 启动器），整个目录可直接打包分享，对方无需安装。', 'green'));
+          log(c('打包完成：', 'green'));
+          log(c('  绿色版目录：build/release/win-unpacked/（已自带 tool/，整目录可直接分享，对方无需安装）', 'green'));
+          log(c('  安装包：build/release/Topspeed Builder Setup 1.1.0.exe', 'green'));
         }
         return;
       }

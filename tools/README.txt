@@ -1,8 +1,9 @@
 Topspeed Builder - 命令行工具（tool 目录）
 =========================================
 
-本目录随「绿色版」一起分发。两个启动器都复用同目录外的 Electron 运行时
-（通过 ELECTRON_RUN_AS_NODE），因此使用者不需要另外安装 Node.js。
+本目录随应用一起分发（绿色版目录与安装版安装后的 tool/ 均包含）。两个启动器都复用
+同目录外的 Electron 运行时（通过 ELECTRON_RUN_AS_NODE），因此使用者不需要另外安装
+Node.js。
 
 目录内容
 --------
@@ -52,6 +53,19 @@ MCP 用法
 
 客户端接入地址：http://127.0.0.1:3000/mcp
 健康检查：      http://127.0.0.1:3000/healthz
+
+对外暴露一个工具 generate_sprites（参数结构与 cli.cjs 的 --json 一致），
+在 IDE / Agent 客户端的 MCP 配置中这样接入（流式 HTTP 传输）：
+
+  {
+    "mcpServers": {
+      "topspeed-builder": {
+        "url": "http://127.0.0.1:3000/mcp"
+      }
+    }
+  }
+
+保存后保持 topspeed-mcp.cmd 在运行，客户端即可发现并调用该工具。
 
 配置来源（重要）
 ----------------

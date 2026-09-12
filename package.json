@@ -50,9 +50,19 @@
     ],
     "win": {
       "target": [
-        "dir"
+        "dir",
+        "nsis"
       ],
       "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Topspeed Builder",
+      "unicode": true
     },
     "mac": {
       "target": [

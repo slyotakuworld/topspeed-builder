@@ -85,7 +85,6 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "fs-extra": "^11.2.0",
     "i18next": "^26.2.0",
-    "jszip": "^3.10.1",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

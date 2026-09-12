@@ -15,8 +15,7 @@
 | 素材库 | 与生成历史同一份台账：生成即自动入库；草稿 / 整图 / 已切图三态展示，支持重命名、删除、放大预览、拷贝 PNG 到默认导出目录 |
 | 提示词助手 | 独立的 LLM 配置，根据一句自然语言批量生成描述、细节提示词、格子名称与风格 |
 | 生成历史 | 保存提示词、参数、输出文件和生成时间，可切回历史配置重新编辑 |
-| 本地草稿模式 | `local-draft` 不调用外部 API，生成本地占位 PNG，零成本验证完整链路 |
-| CLI 与 MCP | 打包产物自带命令行出图工具与 HTTP MCP 服务，供 IDE / Agent 客户端调用 |
+| CLI 与 MCP | 打包产物自带命令行出图工具与 HTTP MCP 服务，供 IDE / Agent 客户端调用；**无项目直出**——只把图片产物写进指定输出目录，不产生任何项目文件 |
 
 ## 典型使用流程
 
@@ -58,7 +57,7 @@ npm run dist:linux    # Linux AppImage / deb
 | `tool\topspeed-cli.cmd` | 命令行出图（生成网格大图 + 智能切分入库），双击显示帮助 |
 | `tool\topspeed-mcp.cmd` | 启动 HTTP MCP 服务（默认 `http://127.0.0.1:3000/mcp`），供 IDE / Agent 客户端连接 |
 
-两者复用应用自带的 Electron 运行时（`ELECTRON_RUN_AS_NODE=1`），目标机器**无需安装 Node.js**；依赖从 `resources/app.asar` 内解析（含 sharp）。接口配置与 GUI 共用 `%APPDATA%\topspeed-builder\settings.json`，修改 GUI 设置后重跑 CLI / 重启 MCP 即生效（也可用环境变量 `TOPSPEED_USER_DATA` 指向独立配置目录）。
+两者复用应用自带的 Electron 运行时（`ELECTRON_RUN_AS_NODE=1`），目标机器**无需安装 Node.js**；依赖从 `resources/app.asar` 内解析（含 sharp）。接口配置与 GUI 共用 `%APPDATA%\topspeed-builder\settings.json`，修改 GUI 设置后重跑 CLI / 重启 MCP 即生效（也可用环境变量 `TOPSPEED_USER_DATA` 指向独立配置目录）。CLI / MCP 为**无项目直出**：指定输出目录即可，生成的网格大图与切分素材写入 `<输出目录>/<批次名>/`，不产生任何项目文件。
 
 ### CLI 用法
 
@@ -78,7 +77,7 @@ tool\topspeed-cli.cmd --project D:\games\my-project --name items --type item --c
 tool\topspeed-cli.cmd ... --no-transparent --slice-cols 3 --slice-rows 2
 ```
 
-说明：`--project` 指向的项目需先用 GUI 创建；`--print-json` 把结果 JSON 输出到 stdout（日志走 stderr），便于脚本管道处理；复杂参数可写进 `--json input.json`（字段与 GUI 的生成输入一致，可带 `slice` 覆盖项）。
+说明：`--project` 是**输出目录**（自动创建），CLI / MCP 为无项目直出模式——网格大图与切分素材写入 `<输出目录>/<批次名>/`（grid.png + 序号命名的素材 PNG + metadata.json），不产生任何项目文件；`--print-json` 把结果 JSON 输出到 stdout（日志走 stderr），便于脚本管道处理；复杂参数可写进 `--json input.json`（字段与 GUI 的生成输入一致，可带 `slice` 覆盖项）。
 
 ### MCP 配置（IDE / Agent 客户端）
 
@@ -110,7 +109,7 @@ macOS 公开发布需使用 Developer ID 证书签名并通过 Apple 公证：�
 
 | 配置项 | 说明 |
 |---|---|
-| 服务商 | `openai`、`custom` 或 `local-draft` |
+| 服务商 | `openai`（官方或任意 OpenAI 兼容中转），接口地址 / Key / 模型均在本页配置 |
 | API 格式 | 自定义接口时可选 `OpenAI 图片格式`（默认）或 `OpenAI Chat 格式`，匹配不同中转站后端 |
 | 接口密钥 | 图片生成服务的 API Key，仅保存在本机 |
 | 接口基础地址 | OpenAI 兼容图片生成或图片编辑接口地址 |
@@ -143,8 +142,6 @@ Chat 格式请求体（选择 `OpenAI Chat 格式` 时发送）：
 ```
 
 参考图模式会在本地项目中保存参考图副本，并通过 OpenAI 图片编辑兼容接口发送分段表单请求。
-
-`local-draft` 模式不会调用外部 API，会生成本地占位 PNG，适合在没有密钥、没有网络或不想消耗额度时验证完整生成链路。
 
 ## 提示词助手
 

@@ -27,12 +27,33 @@ export class ProjectService {
       throw new Error(`项目已存在：${projectPath}`);
     }
 
-    await ensureProjectDirectories(projectPath);
+    const project = this.buildDefaultProject(projectPath, input.name.trim() || "未命名项目");
+    await this.saveProject(project);
+    return project;
+  }
 
+  /**
+   * CLI / MCP 直连出图场景：目录不存在或还没有 project.json 时，就地初始化一个默认项目。
+   * GUI 的「打开项目」流程不走这里（openProjectPath 保持原有报错语义，避免选错目录被静默建项）。
+   */
+  async ensureProjectAt(projectPath: string): Promise<Project> {
+    const absolute = path.resolve(projectPath);
+    const projectJsonPath = path.join(absolute, "project.json");
+    if (await fs.pathExists(projectJsonPath)) {
+      return this.openProjectPath(absolute);
+    }
+    await ensureProjectDirectories(absolute);
+    const project = this.buildDefaultProject(absolute, path.basename(absolute) || "未命名项目");
+    await writeJsonFile(projectJsonPath, project);
+    return project;
+  }
+
+  /** 默认项目骨架：默认风格模板 + 空素材列表（createProject / ensureProjectAt 共用） */
+  private buildDefaultProject(projectPath: string, name: string): Project {
     const createdAt = nowIso();
-    const project: Project = {
+    return {
       id: randomUUID(),
-      name: input.name.trim() || "未命名项目",
+      name,
       path: projectPath,
       gameType: "其他",
       style: "十六位像素风",
@@ -59,9 +80,6 @@ export class ProjectService {
       createdAt,
       updatedAt: createdAt
     };
-
-    await this.saveProject(project);
-    return project;
   }
 
   async openProjectPath(inputPath: string): Promise<Project> {

@@ -45,6 +45,7 @@ import type {
   ReferenceStrength,
   PromptAssistantFields
 } from "@shared/types";
+import { ASSET_TYPE_VALUES, REFERENCE_ROLE_VALUES, REFERENCE_STRENGTH_VALUES } from "@shared/types";
 import {
   STYLE_PRESETS,
   DEFAULT_PROMPT_ASSISTANT_FIELDS,
@@ -129,27 +130,17 @@ function nearestCountPreset(value: number): number {
   }
   return best;
 }
-const referenceRoles: Array<{ value: ReferenceImageRole; label: string }> = [
-  { value: "subject", label: "role.subject" },
-  { value: "style", label: "role.style" },
-  { value: "composition", label: "role.composition" },
-  { value: "palette", label: "role.palette" }
-];
-const referenceStrengthOptions: Array<{ value: ReferenceStrength; label: string }> = [
-  { value: "low", label: "strength.low" },
-  { value: "medium", label: "strength.medium" },
-  { value: "high", label: "strength.high" }
-];
-const assetTypes: Array<{ value: AssetType; label: string }> = [
-  { value: "character", label: "assetType.character" },
-  { value: "enemy", label: "assetType.enemy" },
-  { value: "item", label: "assetType.item" },
-  { value: "icon", label: "assetType.icon" },
-  { value: "ui", label: "assetType.ui" },
-  { value: "effect", label: "assetType.effect" },
-  { value: "background", label: "assetType.background" },
-  { value: "other", label: "assetType.other" }
-];
+const referenceRoles: Array<{ value: ReferenceImageRole; label: string }> = REFERENCE_ROLE_VALUES.map((value) => ({
+  value,
+  label: `role.${value}`
+}));
+const referenceStrengthOptions: Array<{ value: ReferenceStrength; label: string }> = REFERENCE_STRENGTH_VALUES.map(
+  (value) => ({ value, label: `strength.${value}` })
+);
+const assetTypes: Array<{ value: AssetType; label: string }> = ASSET_TYPE_VALUES.map((value) => ({
+  value,
+  label: `assetType.${value}`
+}));
 
 const objectDetailTemplates: Record<AssetType, DetailTemplate[]> = {
   icon: [
@@ -262,14 +253,6 @@ function App(): JSX.Element {
     ],
     [project, i18n.language]
   );
-
-  async function unwrap<T>(request: Promise<IpcResponse<T>>): Promise<T> {
-    const result = await request;
-    if (!result.ok) {
-      throw new Error(result.error ?? "未知错误");
-    }
-    return result.data as T;
-  }
 
   async function refreshInitialState(): Promise<void> {
     try {

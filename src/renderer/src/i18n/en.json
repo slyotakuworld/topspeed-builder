@@ -219,7 +219,6 @@
   "assetType.item": "Item",
   "assetType.character": "Character",
   "assetType.enemy": "Enemy",
-  "assetType.tileset": "Tileset",
   "assetType.ui": "UI",
   "assetType.background": "Background",
   "assetType.effect": "Effect",

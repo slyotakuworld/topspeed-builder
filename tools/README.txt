@@ -5,6 +5,9 @@ Topspeed Builder - 命令行工具（tool 目录）
 同目录外的 Electron 运行时（通过 ELECTRON_RUN_AS_NODE），因此使用者不需要另外安装
 Node.js。
 
+CLI / MCP 为「无项目直出」：只把生成的网格大图与切分素材写进指定的输出目录
+（<输出目录>/<批次名>/），不产生任何项目文件。
+
 目录内容
 --------
   topspeed-cli.cmd   CLI：批量出图 + 自动切分入库
@@ -25,7 +28,7 @@ CLI 用法
     --cell-names 剑士,法师,弓手,盗贼,牧师,骑士
 
 常用参数：
-  --project <dir>        项目目录（必填）
+  --project <dir>        输出目录（必填）；自动创建，产物在 <输出目录>/<批次名>/ 下
   --name <text>          批次名 / 输出前缀（必填）
   --description <text>   整体描述（必填）
   --count <n>            素材数量 1-36（必填）

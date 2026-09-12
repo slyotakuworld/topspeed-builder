@@ -12,6 +12,20 @@ export type GenerationQuality = "low" | "medium" | "high";
 export type ReferenceImageRole = "subject" | "style" | "composition" | "palette";
 export type ReferenceStrength = "low" | "medium" | "high";
 
+/** 三个枚举的全量取值清单（单一事实源）：GUI 下拉 / MCP JSON Schema / CLI 校验共用，新增取值只改这里 */
+export const ASSET_TYPE_VALUES: AssetType[] = [
+  "character",
+  "enemy",
+  "item",
+  "icon",
+  "ui",
+  "effect",
+  "background",
+  "other"
+];
+export const REFERENCE_ROLE_VALUES: ReferenceImageRole[] = ["subject", "style", "composition", "palette"];
+export const REFERENCE_STRENGTH_VALUES: ReferenceStrength[] = ["low", "medium", "high"];
+
 /** 内置美术风格预设（value 与生成时传入的 style 一致；text 为发送给绘图模型的英文风格描述） */
 export interface StylePreset {
   value: string;

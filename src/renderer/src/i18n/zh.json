@@ -89,7 +89,6 @@
   "assetType.item": "道具",
   "assetType.character": "角色",
   "assetType.enemy": "怪物",
-  "assetType.tileset": "瓦片集",
   "assetType.ui": "界面",
   "assetType.background": "背景",
   "assetType.effect": "特效",

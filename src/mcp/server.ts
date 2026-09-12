@@ -8,22 +8,13 @@ import type {
   ReferenceImageRole,
   ReferenceStrength
 } from "@shared/types";
-import { runGeneration } from "../main/runGeneration";
+import { runStandaloneGeneration } from "../main/runStandalone";
 import type { Services } from "../main/services/factory";
-
-const ASSET_TYPES: AssetType[] = [
-  "character",
-  "enemy",
-  "icon",
-  "item",
-  "ui",
-  "background",
-  "effect",
-  "other"
-];
-
-const REFERENCE_ROLES: ReferenceImageRole[] = ["subject", "style", "composition", "palette"];
-const REFERENCE_STRENGTHS: ReferenceStrength[] = ["low", "medium", "high"];
+import {
+  ASSET_TYPE_VALUES as ASSET_TYPES,
+  REFERENCE_ROLE_VALUES as REFERENCE_ROLES,
+  REFERENCE_STRENGTH_VALUES as REFERENCE_STRENGTHS
+} from "@shared/types";
 
 /**
  * generate_sprites 工具的入参 JSON Schema（MCP 客户端据此渲染表单 / 校验）。
@@ -32,7 +23,11 @@ const REFERENCE_STRENGTHS: ReferenceStrength[] = ["low", "medium", "high"];
 const GENERATE_SPRITES_SCHEMA = {
   type: "object",
   properties: {
-    projectPath: { type: "string", description: "现有 Topspeed Builder 项目目录的绝对路径" },
+    projectPath: {
+      type: "string",
+      description:
+        "输出目录的绝对路径（自动创建，不需要是任何项目目录）：网格大图存为 <输出目录>/<批次名>/grid.png，切分素材平铺在同目录下"
+    },
     assetType: {
       type: "string",
       enum: ASSET_TYPES,
@@ -211,12 +206,10 @@ export function createMcpServer(services: Services): Server {
     const input = normalizeInput(raw);
     const sliceOverride = normalizeSlice(raw.slice);
 
-    const result = await runGeneration(services, input, sliceOverride);
+    const result = await runStandaloneGeneration(services, input, input.projectPath, sliceOverride);
 
     const payload = {
-      runId: result.runId,
-      assetId: result.assetId,
-      assetName: result.assetName,
+      batchDir: result.batchDir,
       gridImagePath: result.gridImagePath,
       cols: result.cols,
       rows: result.rows,
@@ -230,7 +223,8 @@ export function createMcpServer(services: Services): Server {
         {
           type: "text",
           text:
-            `已生成并切分入库：${result.assetName}（${result.count} 个素材，${result.cols}x${result.rows} 网格）\n` +
+            `已生成并切分：${input.name}（${result.count} 个素材，${result.cols}x${result.rows} 网格）\n` +
+            `输出目录：${result.batchDir}\n` +
             `网格大图：${result.gridImagePath}\n` +
             `素材文件（${result.files.length}）：\n${result.files.map((f) => `- ${f}`).join("\n")}\n\n` +
             `日志：\n${result.logs.map((l) => `- ${l}`).join("\n")}`

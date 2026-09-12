@@ -1,6 +1,6 @@
 import fs from "fs-extra";
 import path from "node:path";
-import { runGeneration } from "./main/runGeneration";
+import { runStandaloneGeneration } from "./main/runStandalone";
 import { createServices } from "./main/services/factory";
 import { getUserDataDir } from "./main/services/utils";
 import type {
@@ -11,17 +11,7 @@ import type {
   ReferenceImageRole,
   ReferenceStrength
 } from "@shared/types";
-
-const ASSET_TYPES: AssetType[] = [
-  "character",
-  "enemy",
-  "icon",
-  "item",
-  "ui",
-  "background",
-  "effect",
-  "other"
-];
+import { ASSET_TYPE_VALUES as ASSET_TYPES, REFERENCE_ROLE_VALUES as REFERENCE_ROLES } from "@shared/types";
 
 interface CliFlags {
   project?: string;
@@ -137,9 +127,8 @@ function parseArgs(argv: string[]): CliFlags {
 
 function parseReference(value: string): { path: string; role: ReferenceImageRole } {
   const [p, role] = value.split(":");
-  const valid: ReferenceImageRole[] = ["subject", "style", "composition", "palette"];
   const r = (role as ReferenceImageRole) ?? "style";
-  if (!valid.includes(r)) throw new Error(`参考图作用必须是 ${valid.join("/")}： ${value}`);
+  if (!REFERENCE_ROLES.includes(r)) throw new Error(`参考图作用必须是 ${REFERENCE_ROLES.join("/")}： ${value}`);
   return { path: p, role: r };
 }
 
@@ -150,7 +139,7 @@ function printHelp(): void {
   node cli.cjs [--json input.json] [常用参数...]
 
 常用参数（与 --json 字段同名，会覆盖 json 中的值）：
-  --project <dir>        项目目录（必填，除非 --json 提供）
+  --project <dir>        输出目录（必填，除非 --json 提供）；自动创建，不产生任何项目文件
   --name <text>          批次名 / 输出前缀
   --description <text>   整体描述
   --type <type>          素材类型: ${ASSET_TYPES.join("/")}
@@ -211,7 +200,7 @@ function coerceInput(base: Partial<GenerateAssetInput>, flags: CliFlags): Genera
     transparentBackground: flags.transparent ?? base.transparentBackground ?? true,
     trimEdges: flags.trim ?? base.trimEdges ?? true
   };
-  if (!input.projectPath) throw new Error("缺少项目目录：请用 --project 或 --json 提供 projectPath");
+  if (!input.projectPath) throw new Error("缺少输出目录：请用 --project 或 --json 提供 projectPath");
   if (!input.name) throw new Error("缺少批次名：请用 --name 或 --json 提供 name");
   if (!input.description) throw new Error("缺少整体描述：请用 --description 或 --json 提供 description");
   if (!input.count || input.count < 1) throw new Error("缺少素材数量 count（1-36）");
@@ -250,12 +239,10 @@ async function main(): Promise<void> {
   const sliceOverride = flags.slice && Object.keys(flags.slice).length ? flags.slice : undefined;
 
   const services = createServices();
-  const result = await runGeneration(services, input, sliceOverride);
+  const result = await runStandaloneGeneration(services, input, input.projectPath, sliceOverride);
 
   const payload = {
-    runId: result.runId,
-    assetId: result.assetId,
-    assetName: result.assetName,
+    batchDir: result.batchDir,
     gridImagePath: result.gridImagePath,
     cols: result.cols,
     rows: result.rows,
@@ -266,7 +253,8 @@ async function main(): Promise<void> {
   if (flags.printJson) {
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
   } else {
-    console.log(`✅ 已生成并切分入库：${result.assetName}（${result.count} 个素材，${result.cols}x${result.rows} 网格）`);
+    console.log(`✅ 已生成并切分：${input.name}（${result.count} 个素材，${result.cols}x${result.rows} 网格）`);
+    console.log(`输出目录：${result.batchDir}`);
     console.log(`网格大图：${result.gridImagePath}`);
     console.log(`素材文件（${result.files.length}）：`);
     for (const f of result.files) console.log(`  - ${f}`);

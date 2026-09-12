@@ -33,6 +33,9 @@ export async function runGeneration(
   input: GenerateAssetInput,
   sliceOverride?: Partial<GridSliceOptions>
 ): Promise<RunGenerationResult> {
+  // CLI / MCP 场景下 --project 可以是任意目录：不存在或还不是项目时就地初始化（GUI 不受影响，传的都是已有项目）
+  await services.projectService.ensureProjectAt(input.projectPath);
+
   const draft = await services.generationService.generateGrid(input);
 
   const slice: GridSliceOptions = {

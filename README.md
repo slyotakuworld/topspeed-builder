@@ -179,6 +179,10 @@ references/
 | 图像处理 | Sharp |
 | 本地存储 | JSON 文件、项目目录、Electron userData |
 
+## 致谢
+
+本项目的开发参考了 [voicepeak/topspeed-builder](https://github.com/voicepeak/topspeed-builder)（MIT License）的思路与产品形态，代码为独立实现，特此致谢。
+
 ## License
 
 MIT

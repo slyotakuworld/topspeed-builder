@@ -113,6 +113,10 @@ function registerIpc(): void {
     await historyService.removeByAsset(projectPath, assetId);
     return project;
   });
+  // 仅重命名素材（历史台账早于本次改版、没有对应记录的老素材走这里）
+  handle("project:renameAsset", (projectPath: string, assetId: string, name: string) =>
+    projectService.renameAsset(projectPath, assetId, name)
+  );
   handle("reference:chooseImages", (projectPath: string) => referenceService.chooseReferenceImages(projectPath));
 
   handle("generate:grid", (input: GenerateAssetInput) => generationService.generateGrid(input));
@@ -144,7 +148,26 @@ function registerIpc(): void {
       generationService.sliceManualRegions(input, gridImagePath, runId, regions)
   );
   handle("history:list", (projectPath: string) => historyService.list(projectPath));
-  handle("history:remove", (projectPath: string, runId: string) => historyService.remove(projectPath, runId));
+  // 删除历史/素材库记录：已切图入库的记录走 deleteAsset（连同素材文件一起清理，并由
+  // removeByAsset 回收对应历史与网格目录）；纯草稿/仅配置记录只清历史与网格目录。
+  handle("history:remove", async (projectPath: string, runId: string) => {
+    const entry = await historyService.get(projectPath, runId);
+    if (entry?.assetId) {
+      const project = await projectService.deleteAsset(projectPath, entry.assetId);
+      await historyService.removeByAsset(projectPath, entry.assetId);
+      return project;
+    }
+    await historyService.remove(projectPath, runId);
+    return null;
+  });
+  // 重命名：历史记录与素材库共用同一个名字，两边一起改
+  handle("history:rename", async (projectPath: string, runId: string, name: string) => {
+    const entry = await historyService.rename(projectPath, runId, name);
+    if (entry?.assetId) {
+      await projectService.renameAsset(projectPath, entry.assetId, name);
+    }
+    return entry ?? null;
+  });
   handle("history:saveSnapshot", (projectPath: string, runId: string | null, input: GenerateAssetInput) =>
     historyService.saveSnapshot(projectPath, runId, input)
   );
@@ -169,6 +192,12 @@ function registerIpc(): void {
     const absolutePath = resolveProjectPath(projectPath, filePath);
     // 预览通道：超过 1024px 的大图在主进程降采样后再返回，绝不让渲染进程解码全尺寸网格图/参考图
     return imageService.previewDataUrl(absolutePath, 1024);
+  });
+
+  handle("image:thumbDataUrl", async (projectPath: string, filePath: string, maxSide?: number) => {
+    const absolutePath = resolveProjectPath(projectPath, filePath);
+    // 列表缩略图通道：压到 160px 并带内存缓存，素材库一屏几百张小图也不会饿死输入事件
+    return imageService.thumbDataUrl(absolutePath, typeof maxSide === "number" && maxSide > 0 ? maxSide : 160);
   });
 
   handle("shell:showItem", async (filePath: string) => {

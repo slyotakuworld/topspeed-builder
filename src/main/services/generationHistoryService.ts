@@ -79,6 +79,7 @@ export class GenerationHistoryService {
     const entry: GenerationHistoryEntry = {
       runId: nextRunId,
       status: "draft",
+      name: input.name || input.assetType,
       createdAt: now,
       input,
       grid: { cols, rows, width: 0, height: 0, count, gridImagePath: "" },
@@ -87,6 +88,26 @@ export class GenerationHistoryService {
     };
     await this.upsert(projectPath, entry);
     return { runId: nextRunId };
+  }
+
+  /**
+   * 重命名某条记录：素材库与历史记录共用同一个名字，改名后两处同时生效。
+   * 名字只用于展示，不改动磁盘上的素材文件名，避免破坏已导出的引用。
+   */
+  async rename(projectPath: string, runId: string, name: string): Promise<GenerationHistoryEntry | undefined> {
+    const nextName = name.trim().slice(0, 80);
+    if (!nextName) return undefined;
+    const filePath = this.historyPath(projectPath);
+    let renamed: GenerationHistoryEntry | undefined;
+    await withFileLock(filePath, async () => {
+      const entries = await readJsonFile<GenerationHistoryEntry[]>(filePath, []);
+      if (!Array.isArray(entries)) return;
+      renamed = entries.find((item) => item?.runId === runId);
+      if (!renamed) return;
+      renamed.name = nextName;
+      await this.writeHistory(filePath, entries);
+    });
+    return renamed;
   }
 
   /** 删除某条记录；若该记录只是未入库草稿，一并清理其网格大图目录 */

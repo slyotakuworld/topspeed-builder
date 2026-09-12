@@ -33,6 +33,7 @@ declare global {
       chooseDirectory(title: string, defaultPath?: string): Promise<IpcResponse<string>>;
       saveProject(project: Project): Promise<IpcResponse<Project>>;
       deleteAsset(projectPath: string, assetId: string): Promise<IpcResponse<Project>>;
+      renameAsset(projectPath: string, assetId: string, name: string): Promise<IpcResponse<Project>>;
       listDiscoverableProjects(): Promise<IpcResponse<RecentProject[]>>;
       getSettings(): Promise<IpcResponse<AppSettings>>;
       saveSettings(settings: AppSettings): Promise<IpcResponse<AppSettings>>;
@@ -83,13 +84,20 @@ declare global {
       ): Promise<IpcResponse<GeneratedAssetResult>>;
       copyPng(projectPath: string): Promise<IpcResponse<string>>;
       listGenerationHistory(projectPath: string): Promise<IpcResponse<GenerationHistoryEntry[]>>;
-      removeGenerationHistory(projectPath: string, runId: string): Promise<IpcResponse<boolean>>;
+      removeGenerationHistory(projectPath: string, runId: string): Promise<IpcResponse<Project | null>>;
+      renameGenerationHistory(
+        projectPath: string,
+        runId: string,
+        name: string
+      ): Promise<IpcResponse<GenerationHistoryEntry>>;
       saveHistorySnapshot(
         projectPath: string,
         runId: string | null,
         input: GenerateAssetInput
       ): Promise<IpcResponse<{ runId: string }>>;
       readImageDataUrl(projectPath: string, filePath: string): Promise<IpcResponse<string>>;
+      /** 小尺寸缩略图（默认最长边 160px，主进程带内存缓存）：列表密集场景必须走这个，别用 readImageDataUrl */
+      readImageThumbnailDataUrl(projectPath: string, filePath: string, maxSide?: number): Promise<IpcResponse<string>>;
       readImageThumbnail(projectPath: string, runId: string): Promise<IpcResponse<string>>;
       showItemInFolder(filePath: string): Promise<IpcResponse<boolean>>;
       showProjectItemInFolder(projectPath: string, filePath: string): Promise<IpcResponse<boolean>>;

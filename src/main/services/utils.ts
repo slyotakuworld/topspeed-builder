@@ -56,6 +56,7 @@ export async function writeJsonFile<T>(filePath: string, data: T): Promise<void>
   await fs.writeJson(filePath, data, { spaces: 2 });
 }
 
+
 export async function withFileLock<T>(filePath: string, task: () => Promise<T>): Promise<T> {
   const key = path.resolve(filePath).toLowerCase();
   const previous = fileLocks.get(key) ?? Promise.resolve();

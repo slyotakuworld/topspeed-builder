@@ -13,10 +13,7 @@ export class SettingsService {
 
   async getSettings(): Promise<AppSettings> {
     const defaults = await this.getDefaultSettings();
-    return {
-      ...defaults,
-      ...(await this.readSavedSettings())
-    };
+    return this.normalizeAppSettings({ ...defaults, ...(await this.readSavedSettings()) });
   }
 
   /**
@@ -26,23 +23,40 @@ export class SettingsService {
   async saveSettings(settings: AppSettings): Promise<AppSettings> {
     await withFileLock(this.settingsPath, async () => {
       const raw = await this.readRawSettings();
-      await writeJsonFile(this.settingsPath, { ...raw, ...settings });
+      await writeJsonFile(this.settingsPath, { ...raw, ...this.normalizeAppSettings(settings) });
     });
     return this.getSettings();
+  }
+
+  /**
+   * 出图配置规整：apiKey / apiBaseUrl / model 统一 trim。
+   * 首尾空白会让上游把模型名判为「不是合法的模型 ID」直接 400，
+   * 这类脏值一旦落盘就会长期生效，所以在读写两端都收口（与 normalizePromptAssistant 同口径）。
+   */
+  private normalizeAppSettings(settings: AppSettings): AppSettings {
+    const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
+    return {
+      ...settings,
+      apiKey: str(settings.apiKey),
+      apiBaseUrl: str(settings.apiBaseUrl),
+      model: str(settings.model),
+      availableModels: Array.isArray(settings.availableModels)
+        ? settings.availableModels.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean)
+        : []
+    };
   }
 
   /** 提示词助手配置：独立于出图模型，单独持久化在 settings.json 的 promptAssistant 子键 */
   async getPromptAssistant(): Promise<PromptAssistantSettings> {
     const raw = await this.readRawSettings();
-    const saved = (raw.promptAssistant as Partial<PromptAssistantSettings>) ?? {};
-    // fields 需逐键合并：旧配置可能只有部分字段，整对象覆盖会丢默认值
-    return { ...this.defaultPromptAssistant(), ...saved, fields: { ...DEFAULT_PROMPT_ASSISTANT_FIELDS, ...(saved.fields ?? {}) } };
+    return this.normalizePromptAssistant(raw.promptAssistant as Partial<PromptAssistantSettings> | undefined);
   }
 
   async savePromptAssistant(data: PromptAssistantSettings): Promise<PromptAssistantSettings> {
     await withFileLock(this.settingsPath, async () => {
       const raw = await this.readRawSettings();
-      raw.promptAssistant = { ...this.defaultPromptAssistant(), ...data, fields: { ...DEFAULT_PROMPT_ASSISTANT_FIELDS, ...(data.fields ?? {}) } };
+      // 只写「已知字段」：历史版本留下的废弃键（如 stylePresetMode）在下次保存时被自然清除
+      raw.promptAssistant = this.normalizePromptAssistant(data);
       await writeJsonFile(this.settingsPath, raw);
     });
     return this.getPromptAssistant();
@@ -50,6 +64,26 @@ export class SettingsService {
 
   private defaultPromptAssistant(): PromptAssistantSettings {
     return { baseUrl: "", apiKey: "", model: "", availableModels: [], fields: { ...DEFAULT_PROMPT_ASSISTANT_FIELDS } };
+  }
+
+  /**
+   * 把磁盘上的 promptAssistant 规整为一个「字段完全确定」的对象：
+   *  - 逐键挑取，未知/废弃键一律丢弃（避免旧配置残留污染新结构）；
+   *  - fields 逐键合并默认值，避免旧配置缺键导致 undefined；
+   *  - 字符串统一 trim，防止手输/粘贴带首尾空白导致模型名或地址失配。
+   */
+  private normalizePromptAssistant(saved?: Partial<PromptAssistantSettings>): PromptAssistantSettings {
+    const base = this.defaultPromptAssistant();
+    const str = (v: unknown, fallback: string): string => (typeof v === "string" ? v.trim() : fallback);
+    return {
+      baseUrl: str(saved?.baseUrl, base.baseUrl),
+      apiKey: str(saved?.apiKey, base.apiKey),
+      model: str(saved?.model, base.model),
+      availableModels: Array.isArray(saved?.availableModels)
+        ? saved.availableModels.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean)
+        : base.availableModels,
+      fields: { ...DEFAULT_PROMPT_ASSISTANT_FIELDS, ...(saved?.fields ?? {}) }
+    };
   }
 
   private async readRawSettings(): Promise<Record<string, unknown>> {

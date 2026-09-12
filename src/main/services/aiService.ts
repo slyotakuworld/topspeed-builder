@@ -66,19 +66,9 @@ export class AIGenerationService {
 
       const responseText = await response.text();
       if (response.ok) {
-        let modelCount = -1;
-        try {
-          const json = JSON.parse(responseText);
-          const list = Array.isArray(json.data) ? json.data : Array.isArray(json.models) ? json.models : [];
-          modelCount = list.length;
-        } catch {
-          // 返回体不是 JSON 也视为连通成功（部分网关 /models 形态不同）
-        }
-        const detail =
-          modelCount >= 0
-            ? `接口连通（HTTP 200），鉴权通过，模型列表共 ${modelCount} 个。`
-            : "接口连通（HTTP 200）。";
-        return { ok: true, status: response.status, detail };
+        // 成功文案与提示词助手的检测保持一致：只报「连接成功」，模型数量交给「拉取模型」反馈，
+        // 避免同一个设置页里两处检测给出不同口径的成功提示。
+        return { ok: true, status: response.status, detail: "连接成功。" };
       }
 
       if (response.status === 401 || response.status === 403) {
@@ -157,6 +147,10 @@ export class AIGenerationService {
     endpoint: string,
     useReference: boolean
   ): Promise<Buffer> {
+    // 统一 trim 后再发出：首尾空白会被上游判定为「不是合法模型 ID」(400)，
+    // 与提示词助手保持一致（后者一直用 trim 后的值）。
+    const model = args.settings.model.trim();
+
     if (useReference) {
       // OpenAI /images/edits 只认标准字段：image / prompt / model / size / background / quality。
       // 不再发送 editIntent / referenceStrength / referenceImages 等自定义字段——
@@ -165,7 +159,7 @@ export class AIGenerationService {
         const form = new FormData();
         form.append("prompt", args.prompt);
         form.append("size", args.size);
-        form.append("model", args.settings.model);
+        form.append("model", model);
         // OpenAI 标准透明背景字段；关闭时缺省即为不透明/auto
         if (args.transparentBackground) {
           form.append("background", "transparent");
@@ -220,7 +214,7 @@ export class AIGenerationService {
       const payload: Record<string, unknown> = {
         prompt: args.prompt,
         size: args.size,
-        model: args.settings.model
+        model
       };
       if (useQuality && args.quality) {
         payload.quality = args.quality;

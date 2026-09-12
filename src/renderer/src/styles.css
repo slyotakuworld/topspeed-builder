@@ -64,12 +64,12 @@ body {
 button, input, select, textarea { font: inherit; }
 button { color: inherit; }
 
-/* 侧栏底部：构建时间戳，用于判断当前实例是否为最新构建 */
-.sidebarStamp {
-  margin-top: 4px;
-  padding: 3px 6px;
+/* 顶栏右侧：构建时间戳，用于判断当前实例是否为最新构建 */
+.appbarStamp {
+  flex-shrink: 0;
+  padding: 3px 7px;
   font-family: "Cascadia Mono", "Consolas", monospace;
-  font-size: 11px;
+  font-size: 10px;
   letter-spacing: 0.03em;
   color: var(--cyan);
   opacity: 0.85;
@@ -85,9 +85,12 @@ button { color: inherit; }
 }
 
 /* === SHELL === */
+/* 两行网格：第一行是横跨整宽的顶栏（品牌 / 导航 / 项目状态 / 语言切换），
+   第二行左边只有历史记录、右边是页面工作区 */
 .shell {
   display: grid;
-  grid-template-columns: 248px 1fr;
+  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   height: 100vh;
   isolation: isolate;
   position: relative;
@@ -108,12 +111,12 @@ button { color: inherit; }
   );
 }
 
-/* === SIDEBAR === */
+/* === SIDEBAR === 只放历史记录（导航 / 项目状态 / 语言切换已移到顶栏） */
 .sidebar {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 20px 16px;
+  gap: 8px;
+  padding: 14px 14px 16px;
   border-right: 2px solid var(--steel);
   background:
     linear-gradient(180deg, var(--cyan-dim) 0%, transparent 28%),
@@ -134,25 +137,26 @@ button { color: inherit; }
   opacity: 0.25;
 }
 
+/* === BRAND（顶栏内，横向） === */
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-height: 48px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--steel);
+  gap: 10px;
+  flex-shrink: 0;
+  padding-right: 16px;
+  border-right: 1px solid var(--steel);
 }
 
 .brandMark {
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
+  width: 34px;
+  height: 34px;
   border: 2px solid var(--cyan);
-  border-radius: 10px;
+  border-radius: 9px;
   background: linear-gradient(135deg, var(--cyan-dim), transparent);
   color: var(--cyan);
-  box-shadow: 0 0 24px var(--cyan-glow), inset 0 0 20px var(--cyan-glow);
+  box-shadow: 0 0 20px var(--cyan-glow), inset 0 0 16px var(--cyan-glow);
   animation: glow-pulse 3s ease-in-out infinite;
   flex-shrink: 0;
 }
@@ -162,55 +166,56 @@ button { color: inherit; }
 .brand strong {
   display: block;
   font-family: "Bahnschrift", "Aptos", "Segoe UI", system-ui, sans-serif;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.04em;
   color: var(--text);
+  white-space: nowrap;
 }
 
 .brand span {
-  font-size: 11px;
+  display: block;
+  font-size: 10px;
   color: var(--muted);
   letter-spacing: 0.15em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
+/* === NAV（顶栏内，横向标签） === */
 .nav {
-  display: grid;
-  gap: 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
-.nav button {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 40px;
-  padding: 0 14px;
-  border: 2px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  font-family: "Cascadia Mono", "Consolas", monospace;
-  font-size: 13px;
-  font-weight: 500;
-  transition: all 180ms ease;
-  position: relative;
+.nav::-webkit-scrollbar { display: none; }
+
+/* 顶栏里的导航按钮：比侧栏时期更矮更紧，选中态改为底部高亮条 */
+.appbar .nav button {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 12.5px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .nav button:hover:not(:disabled) {
   border-color: var(--chrome);
   background: rgba(255, 255, 255, 0.03);
   color: var(--text);
-  box-shadow: inset 2px 0 0 var(--cyan);
+  box-shadow: inset 0 -2px 0 var(--cyan);
   transform: translateY(-1px);
 }
 
 .nav button.active {
   border-color: var(--steel);
-  background: linear-gradient(90deg, var(--cyan-dim), transparent);
+  background: linear-gradient(180deg, var(--cyan-dim), transparent);
   color: var(--cyan);
-  box-shadow: inset 3px 0 0 var(--cyan), 0 0 20px var(--cyan-glow);
+  box-shadow: inset 0 -3px 0 var(--cyan), 0 0 18px var(--cyan-glow);
   font-weight: 600;
 }
 
@@ -219,51 +224,54 @@ button { color: inherit; }
   opacity: 0.3;
 }
 
-.projectDock {
-  margin-top: auto;
-  display: grid;
-  gap: 6px;
-  padding: 14px;
+/* 顶栏「项目打开状态」chip：已打开显示项目名（悬停看完整路径），未打开为虚线灰态 */
+.projectChip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 240px;
+  flex-shrink: 1;
+  padding: 5px 10px;
   border: 2px solid var(--steel);
   border-radius: 8px;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.02), transparent);
-  position: relative;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.03), transparent), var(--forge);
+  color: var(--cyan);
+  cursor: default;
 }
 
-.projectDock::before {
-  content: 'PROJECT';
-  position: absolute;
-  top: -9px;
-  left: 10px;
-  padding: 0 6px;
+.projectChip > svg { flex-shrink: 0; }
+
+.projectChipLabel {
+  flex-shrink: 0;
   font-family: "Bahnschrift", "Aptos", "Segoe UI", sans-serif;
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.2em;
-  background: var(--pit);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
   color: var(--dim);
 }
 
-.projectDock strong {
-  display: block;
+.projectChip strong {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text);
+  font-size: 12.5px;
   font-weight: 600;
 }
 
-.projectDock small {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  line-height: 1.4;
-  color: var(--muted);
-  font-size: 12px;
+.projectChip.empty {
+  border-style: dashed;
+  border-color: var(--chrome);
+  background: transparent;
 }
 
-.projectDock span { display: none; }
+.projectChip.empty > svg,
+.projectChip.empty strong {
+  color: var(--dim);
+}
 
 /* === SIDEBAR HISTORY RAIL === */
 .historyRail {
@@ -474,6 +482,38 @@ button { color: inherit; }
 
 .historyRailItem:hover .historyRailDelete { opacity: 1; }
 
+/* 重命名态：整条记录变成一个可编辑容器，不再触发「打开」 */
+.historyRailHit.renaming {
+  cursor: default;
+  border-color: var(--chrome);
+}
+
+.historyRailRenameInput {
+  width: 100%;
+  min-width: 0;
+  min-height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--steel);
+  border-radius: 5px;
+  background: var(--pit);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.historyRailDelete.rename:hover {
+  color: var(--cyan);
+  background: rgba(0, 212, 255, 0.14);
+}
+
+.historyRailDelete.confirm {
+  opacity: 1;
+}
+
+.historyRailDelete.confirm:hover {
+  color: #4ade80;
+  background: rgba(74, 222, 128, 0.14);
+}
+
 .historyRailDelete:hover {
   color: var(--magenta);
   background: rgba(255, 45, 149, 0.14);
@@ -496,18 +536,23 @@ button { color: inherit; }
   overflow: hidden;
 }
 
-.topbar {
+/* === APP BAR（顶栏，横跨整宽：品牌 / 导航 / 项目状态 / 语言 / 构建戳 / 运行状态） === */
+.appbar {
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  min-height: 80px;
-  padding: 20px 32px;
+  gap: 16px;
+  min-height: 60px;
+  padding: 0 16px;
   border-bottom: 2px solid var(--steel);
-  background: linear-gradient(90deg, var(--cyan-glow) 0%, transparent 40%);
+  background:
+    linear-gradient(90deg, var(--cyan-glow) 0%, transparent 42%),
+    var(--pit);
   position: relative;
+  z-index: 20;
 }
 
-.topbar::after {
+.appbar::after {
   content: '';
   position: absolute;
   bottom: -2px;
@@ -517,26 +562,49 @@ button { color: inherit; }
   background: rgba(255, 255, 255, 0.03);
 }
 
-.topbar p {
-  margin: 0 0 4px;
-  font-family: "Bahnschrift", "Aptos", "Segoe UI", sans-serif;
+.appbarRight {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  min-width: 0;
+}
+
+/* 顶栏里的状态与语言按钮都比页面内更紧凑 */
+.appbar .busy,
+.appbar .ready {
+  flex-shrink: 0;
+  gap: 6px;
+  padding: 5px 10px;
   font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: var(--cyan);
 }
 
-.topbar h1 {
-  margin: 0;
-  font-family: "Bahnschrift", "Aptos", "Segoe UI", sans-serif;
-  font-size: 28px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: var(--text);
+.appbar .appbarLang {
+  flex-shrink: 0;
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
 }
 
-.statusStrip { min-width: 120px; }
+/* 窄窗口下顶栏按重要性逐级收窄：构建戳 → 品牌副标题 → 项目标签 → 导航文字（退化为纯图标），
+   保证主导航始终可见不被挤掉 */
+@media (max-width: 1200px) {
+  .appbar { gap: 12px; }
+  .projectChip { max-width: 190px; }
+}
+
+@media (max-width: 1024px) {
+  .appbarStamp { display: none; }
+  .brand span { display: none; }
+}
+
+@media (max-width: 860px) {
+  .appbar { padding: 0 10px; gap: 8px; }
+  .brand { padding-right: 10px; }
+  .projectChipLabel { display: none; }
+  .appbar .nav button { padding: 0 11px; }
+  .appbar .nav button span { display: none; }
+}
 
 .busy, .ready {
   display: inline-flex;
@@ -605,7 +673,8 @@ button { color: inherit; }
 
 .notice {
   position: fixed;
-  top: 18px;
+  /* 顶栏（60px）之下，避免提示浮层压住导航 / 项目状态 / 语言切换 */
+  top: 74px;
   right: 24px;
   z-index: 1000;
   max-width: min(440px, calc(100vw - 300px));
@@ -757,10 +826,15 @@ button { color: inherit; }
   padding: 20px;
 }
 .paDialog {
+  /* 固定宽度：用 grid-template-columns: minmax(0, 1fr) 约束唯一列轨道，
+     否则子元素里出现「一整段无空格的长文本」（比如上游返回的 JSON 报错）
+     会把轨道按 max-content 撑开，导致弹窗整体变宽、把界面布局顶变形。 */
   width: min(92vw, 520px);
   max-height: 86vh;
   overflow: auto;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   gap: 12px;
   padding: 16px 18px;
   border-radius: 12px;
@@ -770,11 +844,55 @@ button { color: inherit; }
     var(--forge, #0f1318);
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
 }
+/* 网格子项默认 min-width:auto，长文本会顶开轨道；统一允许收缩 */
+.paDialog > * {
+  min-width: 0;
+}
+
+/* 弹窗内所有提示条一律允许断词换行，避免任何一段长文本改变弹窗宽度 */
+.paDialog .inlineNote,
+.paDialog .paContext,
+.paDialog .paHeader {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .paDialogHead {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+}
+
+/* 提示词助手报错块：上游可能返回一整段不含空格的 JSON，
+   必须强制断词换行，否则会把弹窗宽度顶开、改变整体布局 */
+.paErrorBox {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: pre-wrap;
+  max-height: 180px;
+  overflow: auto;
+}
+
+/* 设置页「拉取模型 / 检测连接」反馈：紧跟「检测连接」按钮之后的定宽槽位（宽度由所在列的固定宽决定）。
+   单行省略（悬停 title 看全文），内容再长也不换行、不撑宽、不挤动设置面板 */
+.modelStatus {
+  flex: 1 1 auto;
+  min-width: 0;
+  align-self: flex-end;
+  padding-bottom: 9px;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+.modelStatus.ok {
+  color: #4ade80;
+}
+.modelStatus.fail {
+  color: #f87171;
 }
 .paDialogClose {
   flex: 0 0 auto;
@@ -886,8 +1004,8 @@ button { color: inherit; }
 
 .detailTemplateBlock {
   display: grid;
-  gap: 12px;
-  padding: 14px;
+  gap: 8px;
+  padding: 10px 12px;
   border: 1px solid rgba(44, 58, 71, 0.9);
   border-radius: 8px;
   background:
@@ -915,22 +1033,24 @@ button { color: inherit; }
   font-size: 12px;
 }
 
+/* 模板卡只承载标题（细节走 title 悬停），所以是单行紧凑排布 */
 .detailTemplateGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(156px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 6px;
 }
 
 .detailTemplateCard {
-  display: grid;
-  gap: 5px;
-  min-height: 92px;
-  padding: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 6px 10px;
   border: 1px solid rgba(44, 58, 71, 0.95);
   border-radius: 8px;
   background: linear-gradient(180deg, rgba(18, 28, 35, 0.92), rgba(9, 13, 17, 0.94));
   color: var(--text);
-  text-align: left;
+  text-align: center;
   font-family: inherit;
   cursor: pointer;
   transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease, background 140ms ease;
@@ -946,41 +1066,19 @@ button { color: inherit; }
   outline: none;
 }
 
+/* 选中态原来靠卡片里的「已选」小标签表达，标签删掉后改用左侧青色条 */
+.detailTemplateCard.selected {
+  box-shadow: inset 3px 0 0 var(--cyan), 0 0 18px rgba(0, 212, 255, 0.18);
+}
+
 .detailTemplateCard strong {
+  min-width: 0;
+  overflow: hidden;
   color: var(--text);
   font-size: 12px;
-  line-height: 1.25;
-}
-
-.detailTemplateCard span {
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.35;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
-
-.detailTemplateCard small {
-  color: var(--dim);
-  font-size: 10px;
-  overflow: hidden;
-  white-space: nowrap;
+  line-height: 1.3;
   text-overflow: ellipsis;
-}
-
-.detailTemplateCard em {
-  width: fit-content;
-  margin-top: auto;
-  padding: 2px 7px;
-  border: 1px solid rgba(0, 212, 255, 0.28);
-  border-radius: 999px;
-  color: var(--cyan);
-  background: var(--cyan-dim);
-  font-size: 9px;
-  font-style: normal;
-  font-weight: 700;
+  white-space: nowrap;
 }
 
 .miniClearButton {
@@ -1269,13 +1367,35 @@ button { color: inherit; }
   }
 }
 
-/* 设置页 API 区：接口地址、API Key 与「拉取模型」按钮同排，底部对齐 */
+/* 设置页 API 区：第一行「接口地址 | API Key（跨后两列）」，第二行「模型 | 拉取模型 / 检测连接 / 反馈」。
+   列宽只由 fr 与固定 px 决定，不受反馈文案长短影响 —— 提示出现或消失都不会改变任何控件宽度 */
 .apiGrid {
-  grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr) minmax(0, 220px);
   align-items: end;
+  row-gap: 12px;
 }
 
-.apiGrid .ghostButton {
+.apiKeyField {
+  grid-column: 2 / -1;
+}
+
+.apiModelField {
+  grid-column: 1 / 2;
+}
+
+/* 两个按钮 + 反馈紧紧跟在模型下拉后面，不占额外列、也不做右对齐 */
+.apiModelActions {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.apiModelActions .ghostButton {
+  flex: 0 0 auto;
+  min-width: 104px;
   margin: 0;
   min-height: 40px;
   white-space: nowrap;
@@ -1369,33 +1489,22 @@ button { color: inherit; }
   cursor: not-allowed;
 }
 
-.modelActionBlock {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 12px;
-}
-
-.modelActionBlock .field {
-  flex: 1 1 260px;
-  min-width: 0;
-  margin: 0;
-}
-
-.modelActionBlock .ghostButton,
-.modelActionBlock .primaryButton {
-  flex: 0 0 auto;
-  margin-bottom: 0;
-}
-
+/* 窄窗口：API / 模型区退回单列堆叠，避免三列被压得过窄 */
 @media (max-width: 760px) {
-  .modelActionBlock {
-    align-items: stretch;
-    flex-direction: column;
+  .apiGrid {
+    grid-template-columns: minmax(0, 1fr);
   }
-  .modelActionBlock .ghostButton,
-  .modelActionBlock .primaryButton {
-    width: 100%;
+  .apiKeyField,
+  .apiModelField,
+  .apiModelActions {
+    grid-column: 1 / -1;
+  }
+  .apiModelActions .ghostButton {
+    flex: 1 1 auto;
+  }
+  .modelStatus {
+    flex: 1 1 100%;
+    padding-bottom: 0;
   }
 }
 
@@ -1588,8 +1697,8 @@ button { color: inherit; }
 
 .referencePanel {
   display: grid;
-  gap: 14px;
-  padding: 16px;
+  gap: 8px;
+  padding: 10px 12px;
   border: 2px solid rgba(0, 212, 255, 0.2);
   border-radius: 8px;
   background:
@@ -1603,6 +1712,14 @@ button { color: inherit; }
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+/* 标题与「0/4」数量同行：数量紧跟在「参考图」后面，不再单独占一行 */
+.referenceTitleRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
 }
 
 .referenceHeader strong,
@@ -1620,6 +1737,12 @@ button { color: inherit; }
   font-size: 12px;
 }
 
+.referenceTitleRow .referenceCount {
+  margin: 0;
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 12px;
+}
+
 .referenceActions {
   display: flex;
   flex-wrap: wrap;
@@ -1628,7 +1751,7 @@ button { color: inherit; }
   align-items: center;
 }
 
-/* 参考强度：置于「导入参考图」按钮左侧的紧凑下拉 */
+/* 参考强度：排在「导入参考图」按钮右侧的紧凑下拉 */
 .strengthControl {
   display: flex;
   align-items: center;
@@ -1664,34 +1787,37 @@ button { color: inherit; }
   background: var(--pit);
 }
 
+/* 一行 4 个紧凑缩略图；细节走双击放大，不再在卡片里堆文字 */
 .referenceGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
 }
 
 .referenceCard {
   position: relative;
   display: grid;
-  grid-template-columns: 72px 1fr;
-  gap: 10px;
+  gap: 4px;
   min-width: 0;
-  padding: 10px 36px 10px 10px;
+  padding: 5px;
   border: 1px solid rgba(44, 58, 71, 0.95);
   border-radius: 8px;
   background: linear-gradient(180deg, rgba(18, 28, 35, 0.9), rgba(9, 13, 17, 0.95));
 }
 
+/* 定高而不是方形：让整块参考图区高度可预期，画面细节交给双击放大 */
 .referenceThumb {
+  position: relative;
   display: grid;
   place-items: center;
-  width: 72px;
-  height: 72px;
+  width: 100%;
+  height: 84px;
   overflow: hidden;
   border: 1px solid var(--steel);
   border-radius: 6px;
   background: var(--pit);
   color: var(--dim);
+  cursor: zoom-in;
 }
 
 .referenceThumb img {
@@ -1701,49 +1827,101 @@ button { color: inherit; }
   image-rendering: pixelated;
 }
 
-.referenceMeta {
-  display: grid;
-  gap: 5px;
+.referenceName {
   min-width: 0;
-}
-
-.referenceMeta strong {
   overflow: hidden;
   color: var(--text);
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.referenceMeta small {
-  color: var(--dim);
-  font-size: 11px;
-}
-
-.referenceMeta select {
+.referenceCard select {
   width: 100%;
-  min-height: 30px;
+  min-height: 26px;
+  padding: 0 6px;
   border: 1px solid var(--steel);
   border-radius: 6px;
   background: var(--pit);
   color: var(--muted);
   font-family: "Cascadia Mono", "Consolas", monospace;
   font-size: 11px;
+  cursor: pointer;
 }
 
 .referenceRemove {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 4px;
+  right: 4px;
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
-  border: 1px solid rgba(255, 45, 149, 0.25);
-  border-radius: 6px;
-  background: rgba(255, 45, 149, 0.08);
+  width: 20px;
+  height: 20px;
+  border: 1px solid rgba(255, 45, 149, 0.3);
+  border-radius: 5px;
+  background: rgba(20, 12, 18, 0.72);
   color: var(--magenta);
   cursor: pointer;
+}
+
+.referenceRemove:hover {
+  border-color: var(--magenta);
+  background: rgba(255, 45, 149, 0.22);
+}
+
+/* 通用图片放大预览：参考图 / 素材库整图 / 素材库切图共用。
+   由 portal 挂在 body 下，恒定居中 —— 不受卡片 transform / overflow 影响 */
+.imageLightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.74);
+  cursor: zoom-out;
+}
+
+.imageLightboxInner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  max-width: 100%;
+  max-height: 100%;
+  cursor: zoom-out;
+}
+
+.imageLightboxInner img {
+  max-width: min(86vw, 100%);
+  max-height: 74vh;
+  object-fit: contain;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 8px;
+  background:
+    repeating-conic-gradient(#eee 0% 25%, #fff 0% 50%) 50% / 16px 16px;
+  image-rendering: pixelated;
+  cursor: default;
+}
+
+.imageLightboxCap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.imageLightboxCap strong {
+  color: #fff;
+  font-size: 13px;
+}
+
+.imageLightboxCap small {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 12px;
 }
 
 .maskPanel {
@@ -2028,7 +2206,8 @@ button { color: inherit; }
 
 .assetGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  /* 240px 起：4 列切图每格 ~50px，底部 5 个紧凑按钮也放得开 */
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 16px;
 }
 
@@ -2084,36 +2263,6 @@ button { color: inherit; }
   box-sizing: border-box;
 }
 
-/* 素材卡内多图缩略导航 */
-.assetThumbs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.assetThumbs button {
-  width: 46px;
-  height: 46px;
-  padding: 0;
-  overflow: hidden;
-  border: 1px solid var(--steel);
-  border-radius: 6px;
-  background: var(--pit);
-  cursor: pointer;
-}
-
-.assetThumbs button.active {
-  border-color: var(--cyan);
-  box-shadow: 0 0 8px var(--cyan-glow);
-}
-
-.assetThumbs img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  image-rendering: pixelated;
-}
-
 .assetCard {
   display: grid;
   gap: 12px;
@@ -2124,39 +2273,6 @@ button { color: inherit; }
   border-color: var(--cyan-dim);
   transform: translateY(-2px);
   box-shadow: 0 16px 40px var(--shadow);
-}
-
-.assetPreview {
-  display: grid;
-  place-items: center;
-  height: 160px;
-  overflow: hidden;
-  border: 2px solid var(--steel);
-  border-radius: 6px;
-  background-color: var(--pit);
-  background-image:
-    linear-gradient(45deg, rgba(255, 255, 255, 0.04) 25%, transparent 25%),
-    linear-gradient(-45deg, rgba(255, 255, 255, 0.04) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.04) 75%),
-    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.04) 75%);
-  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
-  background-size: 16px 16px, 16px 16px, 16px 16px, 16px 16px;
-  color: var(--dim);
-}
-
-.assetPreview img {
-  width: 92%;
-  height: 92%;
-  object-fit: contain;
-  image-rendering: pixelated;
-  filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.4));
-}
-
-.assetBody strong {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--text);
-  font-weight: 600;
 }
 
 .assetBody span {
@@ -2172,10 +2288,261 @@ button { color: inherit; }
   margin-top: 2px;
 }
 
+/* ---- 素材库卡片（三态：无图 / 有整图未切图 / 已切图） ---- */
+.libraryCard {
+  gap: 10px;
+  padding: 12px;
+}
+
+.libraryHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.libraryBadge {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border: 1px solid var(--steel);
+  border-radius: 999px;
+  font-family: "Bahnschrift", "Aptos", "Segoe UI", sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+
+.libraryBadge.empty {
+  border-color: rgba(148, 163, 184, 0.35);
+  background: rgba(148, 163, 184, 0.1);
+  color: var(--muted);
+}
+
+.libraryBadge.grid {
+  border-color: rgba(255, 140, 0, 0.35);
+  background: var(--amber-dim);
+  color: var(--amber);
+}
+
+.libraryBadge.sliced {
+  border-color: rgba(0, 212, 255, 0.35);
+  background: rgba(0, 212, 255, 0.1);
+  color: var(--cyan);
+}
+
+.libraryTitleRow {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.libraryTitleRow strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.libraryIconButton {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--steel);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.libraryIconButton:hover {
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
+
+.libraryRenameRow {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.libraryRenameRow input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--steel);
+  border-radius: 6px;
+  background: var(--pit);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.libraryRenameRow .ghostButton {
+  padding: 4px 6px;
+}
+
+.libraryMedia {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  min-height: 124px;
+}
+
+.libraryPlaceholder {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 18px 10px;
+  border: 1px dashed var(--steel);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.015);
+  color: var(--dim);
+  text-align: center;
+}
+
+.libraryPlaceholder span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.libraryPlaceholder small {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--dim);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.libraryThumb {
+  position: relative; /* 选中角标 / 溢出角标 / 序号都绝对定位在格子里 */
+  display: grid;
+  place-items: center;
+  padding: 0;
+  overflow: hidden;
+  border: 2px solid var(--steel);
+  border-radius: 6px;
+  background-color: var(--pit);
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.04) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.04) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.04) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.04) 75%);
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-size: 16px 16px, 16px 16px, 16px 16px, 16px 16px;
+  color: var(--dim);
+  cursor: pointer;
+}
+
+/* 整图预览：固定高度、宽度自适应，避免与 aspect-ratio 形成循环依赖 */
+.libraryThumb.solo {
+  width: 100%;
+  max-width: 280px;
+  height: 150px;
+  cursor: zoom-in;
+}
+
+/* 切图缩略：正方形，宽度由网格轨道决定 */
+.libraryThumb.grid {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+}
+
+/* 单选态：边框点亮 + 序号角标 —— 这是「参考 / 定位」的作用对象 */
+.libraryThumb.grid.selected {
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 1px rgba(0, 212, 255, 0.45), 0 0 12px var(--cyan-glow);
+}
+
+.libraryThumbIndex {
+  position: absolute;
+  top: 0;
+  left: 0;
+  min-width: 15px;
+  padding: 0 3px;
+  border-bottom-right-radius: 5px;
+  background: var(--cyan);
+  color: #04141a;
+  font-family: "Bahnschrift", "Aptos", "Segoe UI", sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+}
+
+.libraryThumbMore {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-family: "Bahnschrift", "Aptos", "Segoe UI", sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.libraryThumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+/* 4 列密排：16 张切图刚好 4×4 一屏铺满，不再截断成 3 行 */
+.libraryThumbGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  width: 100%;
+}
+
 .assetActions {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+/* 素材库卡片底部工具条：按钮压到 26px 高、11px 字号，让出高度给 4 行切图 */
+.libraryCard .assetActions {
+  gap: 4px;
+  margin-top: auto;
+}
+
+.libraryCard .assetActions .ghostButton {
+  min-height: 26px;
+  padding: 0 8px;
+  border-radius: 6px;
+  gap: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.libraryCard .assetActions .ghostButton svg {
+  width: 13px;
+  height: 13px;
+}
+
+.ghostButton.danger {
+  border-color: rgba(255, 45, 149, 0.3);
+  color: var(--magenta);
+}
+
+.ghostButton.danger:hover {
+  border-color: var(--magenta);
+  background: linear-gradient(180deg, rgba(255, 45, 149, 0.22), transparent), var(--forge);
+  box-shadow: 0 0 16px rgba(255, 45, 149, 0.22);
 }
 
 .pill {

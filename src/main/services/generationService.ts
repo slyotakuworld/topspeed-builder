@@ -100,6 +100,7 @@ export class GenerationService {
     await this.historyService.upsert(project.path, {
       runId,
       status: "draft",
+      name: input.name || input.assetType,
       createdAt: nowIso(),
       input,
       grid: {
@@ -344,6 +345,8 @@ export class GenerationService {
     await this.historyService.upsert(project.path, {
       runId: draft.runId,
       status: "committed",
+      // 保留用户在素材库/历史里的重命名，不被表单批次名覆盖
+      name: previousHistory?.name || input.name || input.assetType,
       createdAt: previousHistory?.createdAt ?? nowIso(),
       committedAt: nowIso(),
       input,
@@ -640,6 +643,7 @@ export class GenerationService {
     await this.historyService.upsert(project.path, {
       runId,
       status: "committed",
+      name: previousHistory?.name || input.name || input.assetType,
       createdAt: previousHistory?.createdAt ?? nowIso(),
       committedAt: nowIso(),
       input,

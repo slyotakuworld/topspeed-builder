@@ -48,13 +48,19 @@ contextBridge.exposeInMainWorld("topspeedBuilder", {
   listGenerationHistory: (projectPath: string) => ipcRenderer.invoke("history:list", projectPath),
   removeGenerationHistory: (projectPath: string, runId: string) =>
     ipcRenderer.invoke("history:remove", projectPath, runId),
+  renameGenerationHistory: (projectPath: string, runId: string, name: string) =>
+    ipcRenderer.invoke("history:rename", projectPath, runId, name),
   saveHistorySnapshot: (projectPath: string, runId: string | null, input: GenerateAssetInput) =>
     ipcRenderer.invoke("history:saveSnapshot", projectPath, runId, input),
   readImageDataUrl: (projectPath: string, filePath: string) =>
     ipcRenderer.invoke("image:dataUrl", projectPath, filePath),
+  readImageThumbnailDataUrl: (projectPath: string, filePath: string, maxSide?: number) =>
+    ipcRenderer.invoke("image:thumbDataUrl", projectPath, filePath, maxSide ?? 160),
   readImageThumbnail: (projectPath: string, runId: string) =>
     ipcRenderer.invoke("image:thumbnail", projectPath, runId),
   deleteAsset: (projectPath: string, assetId: string) => ipcRenderer.invoke("project:deleteAsset", projectPath, assetId),
+  renameAsset: (projectPath: string, assetId: string, name: string) =>
+    ipcRenderer.invoke("project:renameAsset", projectPath, assetId, name),
   showItemInFolder: (filePath: string) => ipcRenderer.invoke("shell:showItem", filePath),
   showProjectItemInFolder: (projectPath: string, filePath: string) =>
     ipcRenderer.invoke("shell:showProjectItem", projectPath, filePath),

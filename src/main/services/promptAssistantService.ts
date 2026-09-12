@@ -111,8 +111,9 @@ export class PromptAssistantService {
     const userPrompt = contextParts.join("\n") +
       (input.count && input.count > 0 ? `\n\n要求：cellNames 请提供恰好 ${input.count} 个名称，顺序对应网格布局。` : "");
 
+    const model = settings.model.trim();
     const body = {
-      model: settings.model.trim(),
+      model,
       messages: [
         { role: "system", content: buildSystemPrompt(input.fields ?? settings.fields ?? DEFAULT_PROMPT_ASSISTANT_FIELDS) },
         { role: "user", content: userPrompt }

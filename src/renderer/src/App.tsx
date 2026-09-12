@@ -1,9 +1,9 @@
 import { useTranslation } from "react-i18next";
+import { createPortal } from "react-dom";
 import i18n, { switchLanguage } from "./i18n";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
-  Boxes,
   Check,
   Download,
   FileText,
@@ -12,6 +12,7 @@ import {
   Home,
   Image,
   Loader2,
+  Pencil,
   Play,
   Plus,
   RefreshCw,
@@ -34,6 +35,7 @@ import type {
   GridSliceOptions,
   ImportedReferenceImage,
   IpcResponse,
+  LibraryAssetState,
   Project,
   PromptAssistantResult,
   PromptAssistantSettings,
@@ -43,13 +45,38 @@ import type {
   ReferenceStrength,
   PromptAssistantFields
 } from "@shared/types";
-import { STYLE_PRESETS, DEFAULT_PROMPT_ASSISTANT_FIELDS, PROMPT_ASSISTANT_FIELD_KEYS } from "@shared/types";
+import {
+  STYLE_PRESETS,
+  DEFAULT_PROMPT_ASSISTANT_FIELDS,
+  PROMPT_ASSISTANT_FIELD_KEYS,
+  resolveLibraryAssetState
+} from "@shared/types";
 import FreeCutModal from "./FreeCutModal";
 
 type Page = "home" | "generate" | "assets" | "settings";
 type DetailTemplate = { id: string; name: string; prompt: string; meta: string };
 type ReferenceDraft = ReferenceImageInput & Partial<Pick<ImportedReferenceImage, "width" | "height" | "bytes" | "hash" | "thumbnailPath" | "dataUrl">>;
 type SelectOption = string | { value: string; label: string };
+
+/**
+ * 素材库的一条记录。数据源是「生成历史台账」——所以没有图、只有整图、已切图三种状态
+ * 天然都被覆盖；另把项目里没有对应历史的老素材（历史台账早于该功能）作为孤儿条目并入，
+ * 保证旧项目不丢素材。entry 为空即孤儿条目。
+ */
+type LibraryItem = {
+  runId: string;
+  entry: GenerationHistoryEntry | null;
+  name: string;
+  assetType: AssetType;
+  state: LibraryAssetState;
+  createdAt: string;
+  count: number;
+  gridImagePath: string;
+  files: string[];
+  metadataPath?: string;
+  assetId?: string;
+  description: string;
+};
 // label 一律用 i18n key（其它选项数组同款写法），value 保持原值不动——value 是要传给 AI 的，
 // 改了会改变生成结果、也会让历史里的旧值匹配不上。
 const gameTypeOptions: SelectOption[] = [
@@ -340,6 +367,18 @@ function App(): JSX.Element {
     }
   }
 
+  /** 重命名历史记录：素材库与历史共用同一个名字，改名后两处一起刷新 */
+  async function renameHistoryEntry(entry: GenerationHistoryEntry, name: string): Promise<void> {
+    const bridge = window.topspeedBuilder;
+    const targetPath = project?.path;
+    if (!bridge || !targetPath || typeof bridge.renameGenerationHistory !== "function") return;
+    const result = await bridge.renameGenerationHistory(targetPath, entry.runId, name);
+    if (result.ok) {
+      await refreshHistory(targetPath);
+      await refreshProject(targetPath);
+    }
+  }
+
   async function runTask<T>(label: string, task: () => Promise<T>, success?: (result: T) => string): Promise<T | null> {
     setBusy(label);
     setMessage("");
@@ -365,7 +404,9 @@ function App(): JSX.Element {
 
   return (
     <main className="shell">
-      <aside className="sidebar">
+      {/* 顶栏：品牌 / 主导航 / 项目打开状态 / 语言切换 / 构建戳 / 运行状态。
+          左侧栏只承载历史记录，不再放导航与项目信息 */}
+      <header className="appbar">
         <div className="brand">
           <div className="brandMark">
             <Sparkles size={18} />
@@ -394,51 +435,55 @@ function App(): JSX.Element {
           })}
         </nav>
 
+        <div className="appbarRight">
+          <div
+            className={project ? "projectChip" : "projectChip empty"}
+            title={project ? project.path : t("project.dock.hint")}
+          >
+            <FolderOpen size={15} />
+            <span className="projectChipLabel">{t("project.dock.label")}</span>
+            <strong>{project?.name ?? t("project.dock.empty")}</strong>
+          </div>
+
+          {busy ? (
+            <span className="busy">
+              <Loader2 size={15} className="spin" />
+              {busy}
+            </span>
+          ) : (
+            <span className="ready">
+              <Check size={15} />
+              {t("topbar.ready")}
+            </span>
+          )}
+
+          <button
+            className="ghostButton appbarLang"
+            type="button"
+            onClick={() => switchLanguage(i18n.language === "zh" ? "en" : "zh")}
+          >
+            {t("lang.switch")}
+          </button>
+
+          <div className="appbarStamp" title={`${t("buildStamp.tip")} ${__APP_BUILD_TS__}`}>
+            rev {__APP_BUILD_TS__}
+            {import.meta.env.DEV ? " · dev" : ""}
+          </div>
+        </div>
+      </header>
+
+      <aside className="sidebar">
         <SidebarHistoryRail
           projectPath={project?.path ?? null}
           entries={historyEntries}
           selectedRunId={activeRunId}
           onOpen={openHistoryEntry}
           onRemove={(entry) => void removeHistoryEntry(entry)}
+          onRename={renameHistoryEntry}
         />
-
-        <div className="projectDock">
-          <span>{t("project.dock.label")}</span>
-          <strong>{project?.name ?? t("project.dock.empty")}</strong>
-          <small>{project?.path ?? t("project.dock.hint")}</small>
-        </div>
-        <button
-          className="ghostButton"
-          style={{ fontSize: 11, minHeight: 32, justifyContent: "center" }}
-          onClick={() => switchLanguage(i18n.language === "zh" ? "en" : "zh")}
-        >{t("lang.switch")}</button>
-        <div className="sidebarStamp" title={`${t("buildStamp.tip")} ${__APP_BUILD_TS__}`}>
-          rev {__APP_BUILD_TS__}
-          {import.meta.env.DEV ? " · dev" : ""}
-        </div>
       </aside>
 
       <section className="workspace">
-        <header className="topbar">
-          <div>
-            <p>{pageLabel(page)}</p>
-            <h1>{project ? project.name : t("brand.name")}</h1>
-          </div>
-          <div className="statusStrip">
-            {busy ? (
-              <span className="busy">
-                <Loader2 size={15} className="spin" />
-                {busy}
-              </span>
-            ) : (
-              <span className="ready">
-                <Check size={15} />
-                {t("topbar.ready")}
-              </span>
-            )}
-          </div>
-        </header>
-
         {message && (
           <div className={message.includes("失败") || message.includes("错误") ? "notice error" : "notice"}>
             <span>{message}</span>
@@ -484,11 +529,13 @@ function App(): JSX.Element {
         {page === "assets" && project && (
           <AssetsPage
             project={project}
+            historyEntries={historyEntries}
             exportDirectory={settings.defaultExportDirectory}
             runTask={runTask}
             refreshProject={refreshProject}
-            onHistoryChanged={() => void refreshHistory(project.path)}
+            refreshHistory={() => refreshHistory(project.path)}
             onOpenSettings={() => setPage("settings")}
+            onOpenHistory={openHistoryEntry}
             onUseAsReference={(asset, filePath) => {
               setQueuedReference({
                 path: filePath,
@@ -944,17 +991,26 @@ function GeneratePage(props: {
         logs: entry.logs || [],
         autoCells: restoredAutoCells
       });
-      // 载入历史后立刻用当前算法对这张已有大图重新检测一次：历史里存的是入库当时的结果，
+      // 载入历史后要用当前算法对这张已有大图重新检测一次：历史里存的是入库当时的结果，
       // 算法升级后可能已不准确；而切分时 commitSlice 一定会重算，预览必须与它一致，
       // 否则会出现"绿框是旧的、切出来是新的"。无需重新生成大图。
-      void window.topspeedBuilder
-        .detectAutoCells(props.project.path, entry.grid.gridImagePath, entry.grid.count)
-        .then((result) => {
-          if (!result.ok) return;
-          const cells = result.data && result.data.length > 0 ? result.data : undefined;
-          setDraft((current) => (current && current.runId === entry.runId ? { ...current, autoCells: cells } : current));
-        })
-        .catch(() => undefined);
+      //
+      // 但这件事是整幅图（1024–2048px）的纯 JS 像素运算，主进程单次要跑一两秒；
+      // 而「点开一条历史」紧接着的动作往往就是改参数、打字，所以这里刻意延后 600ms 再发起：
+      // 先让参数回填与首屏渲染落地，界面暂用历史里存的结果（通常已足够准）。
+      // 主进程侧的重检测循环也做了时间片让出（见 imageService.breathe），不会再一口气堵死输入。
+      if (redetectTimerRef.current !== null) window.clearTimeout(redetectTimerRef.current);
+      redetectTimerRef.current = window.setTimeout(() => {
+        redetectTimerRef.current = null;
+        void window.topspeedBuilder
+          .detectAutoCells(props.project.path, entry.grid.gridImagePath, entry.grid.count)
+          .then((result) => {
+            if (!result.ok) return;
+            const cells = result.data && result.data.length > 0 ? result.data : undefined;
+            setDraft((current) => (current && current.runId === entry.runId ? { ...current, autoCells: cells } : current));
+          })
+          .catch(() => undefined);
+      }, 600);
     } else {
       // 「仅配置」快照：只回填参数，锚定该记录（再点保存 = 原地更新），提示用户可继续生成
       setDraft(null);
@@ -970,6 +1026,13 @@ function GeneratePage(props: {
   // 该请求是一次性的：无论是否应用，处理完立即通知外层清空，杜绝"先加载历史再切项目"时残留请求
   // 在下一个项目里被当成当前项目的历史回填（跨项目串设置/串参数）。
   const handledRestoreSeq = useRef(0);
+  /** 历史恢复后的延迟重检测定时器句柄（见 restoreFromHistory 里的说明） */
+  const redetectTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    return () => {
+      if (redetectTimerRef.current !== null) window.clearTimeout(redetectTimerRef.current);
+    };
+  }, []);
   useEffect(() => {
     const request = props.pendingRestore;
     if (!request || request.seq === handledRestoreSeq.current) return;
@@ -1106,13 +1169,11 @@ function GeneratePage(props: {
                   type="button"
                   aria-pressed={selected}
                   className={selected ? "detailTemplateCard selected" : "detailTemplateCard"}
-                  title={selected ? t("generate.detailRemove") : t("generate.detailAdd")}
+                  // 卡片只展示标题，具体内容挂到悬停提示里，需要时看得到、平时不占高度
+                  title={template.prompt}
                   onClick={() => handleDetailTemplateToggle(template)}
                 >
                   <strong>{template.name}</strong>
-                  <span>{template.prompt}</span>
-                  <small>{template.meta}</small>
-                  <em>{selected ? t("generate.detailSelected") : t("generate.detailAdd")}</em>
                 </button>
               );
             })}
@@ -1447,13 +1508,28 @@ function SidebarHistoryRail(props: {
   selectedRunId: string | null;
   onOpen: (entry: GenerationHistoryEntry) => void;
   onRemove: (entry: GenerationHistoryEntry) => void;
+  onRename: (entry: GenerationHistoryEntry, name: string) => Promise<void>;
 }): JSX.Element {
   const { t } = useTranslation();
   const [visibleCount, setVisibleCount] = useState(RAIL_PAGE);
+  const [renamingRunId, setRenamingRunId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   // 历史载入后先让出 1.2s 给界面交互（用户此刻往往正要输入），随后才开始懒加载缩略图
   const [thumbsReady, setThumbsReady] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const projectPath = props.projectPath;
+
+  function startRename(entry: GenerationHistoryEntry): void {
+    setRenameDraft(entry.name || entry.input.name || "");
+    setRenamingRunId(entry.runId);
+  }
+
+  async function submitRename(entry: GenerationHistoryEntry): Promise<void> {
+    const next = renameDraft.trim();
+    setRenamingRunId(null);
+    if (!next || next === (entry.name || entry.input.name || "")) return;
+    await props.onRename(entry, next);
+  }
 
   // 项目切换或历史条数变化时回到只渲染开头一批，并重新进入“缩略图冷却期”
   useEffect(() => {
@@ -1492,36 +1568,97 @@ function SidebarHistoryRail(props: {
             const selected = entry.runId === props.selectedRunId;
             return (
               <div key={entry.runId} className={selected ? "historyRailItem selected" : "historyRailItem"}>
-                <button
-                  className="historyRailHit"
-                  type="button"
-                  aria-current={selected ? "true" : undefined}
-                  onClick={() => props.onOpen(entry)}
-                >
-                  <RailThumb
-                    projectPath={projectPath}
-                    runId={entry.runId}
-                    enabled={thumbsReady}
-                    hasImage={Boolean(entry.grid && entry.grid.gridImagePath)}
-                  />
-                  <span className="historyRailMeta">
-                    <span className="historyRailMetaLine">
-                      <i className={`railStatus ${entry.status === "committed" ? "committed" : "draft"}`} />
-                      <em>{entry.status === "committed" ? t("history.statusCommitted") : t("history.statusDraft")}</em>
-                      <small>{entry.grid.count} {t("history.unit")}</small>
+                {renamingRunId === entry.runId ? (
+                  <div className="historyRailHit renaming">
+                    <RailThumb
+                      projectPath={projectPath}
+                      runId={entry.runId}
+                      enabled={thumbsReady}
+                      hasImage={Boolean(entry.grid && entry.grid.gridImagePath)}
+                    />
+                    <span className="historyRailMeta">
+                      <span className="historyRailMetaLine">
+                        <i className={`railStatus ${entry.status === "committed" ? "committed" : "draft"}`} />
+                        <em>{entry.status === "committed" ? t("history.statusCommitted") : t("history.statusDraft")}</em>
+                        <small>{entry.grid.count} {t("history.unit")}</small>
+                      </span>
+                      <input
+                        className="historyRailRenameInput"
+                        autoFocus
+                        value={renameDraft}
+                        maxLength={80}
+                        onChange={(event) => setRenameDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") void submitRename(entry);
+                          if (event.key === "Escape") setRenamingRunId(null);
+                        }}
+                      />
+                      <small>{formatTimestamp(entry.createdAt)}</small>
                     </span>
-                    <strong>{entry.input.name || t(`assetType.${entry.input.assetType}`)}</strong>
-                    <small>{formatTimestamp(entry.createdAt)}</small>
-                  </span>
-                </button>
-                <button
-                  className="historyRailDelete"
-                  type="button"
-                  title={t("history.remove")}
-                  onClick={() => props.onRemove(entry)}
-                >
-                  <Trash2 size={13} />
-                </button>
+                  </div>
+                ) : (
+                  <button
+                    className="historyRailHit"
+                    type="button"
+                    aria-current={selected ? "true" : undefined}
+                    onClick={() => props.onOpen(entry)}
+                  >
+                    <RailThumb
+                      projectPath={projectPath}
+                      runId={entry.runId}
+                      enabled={thumbsReady}
+                      hasImage={Boolean(entry.grid && entry.grid.gridImagePath)}
+                    />
+                    <span className="historyRailMeta">
+                      <span className="historyRailMetaLine">
+                        <i className={`railStatus ${entry.status === "committed" ? "committed" : "draft"}`} />
+                        <em>{entry.status === "committed" ? t("history.statusCommitted") : t("history.statusDraft")}</em>
+                        <small>{entry.grid.count} {t("history.unit")}</small>
+                      </span>
+                      <strong>{entry.name || entry.input.name || t(`assetType.${entry.input.assetType}`)}</strong>
+                      <small>{formatTimestamp(entry.createdAt)}</small>
+                    </span>
+                  </button>
+                )}
+                {renamingRunId === entry.runId ? (
+                  <>
+                    <button
+                      className="historyRailDelete confirm"
+                      type="button"
+                      title={t("history.renameSave")}
+                      onClick={() => void submitRename(entry)}
+                    >
+                      <Check size={13} />
+                    </button>
+                    <button
+                      className="historyRailDelete"
+                      type="button"
+                      title={t("history.renameCancel")}
+                      onClick={() => setRenamingRunId(null)}
+                    >
+                      <X size={13} />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      className="historyRailDelete rename"
+                      type="button"
+                      title={t("history.rename")}
+                      onClick={() => startRename(entry)}
+                    >
+                      <Pencil size={13} />
+                    </button>
+                    <button
+                      className="historyRailDelete"
+                      type="button"
+                      title={t("history.remove")}
+                      onClick={() => props.onRemove(entry)}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </>
+                )}
               </div>
             );
           })
@@ -1603,6 +1740,53 @@ function RailThumb(props: {
   );
 }
 
+/**
+ * 通用图片放大预览：恒定在窗口正中，点图片以外的任何区域或按 Esc 关闭。参考图与素材库共用。
+ *
+ * 必须用 portal 挂到 document.body：卡片有自己的 `transform`（hover 位移），而 transform
+ * 会给后代 `position: fixed` 生成新的包含块 —— 灯箱若留在卡片内部，就会锚定到卡片上；
+ * 鼠标一动 hover 状态反复切换，灯箱就在「卡片上」和「窗口中央」之间来回跳。挂到 body 后
+ * 与卡片、overflow、transform 全部解耦，位置唯一且可控。
+ */
+function ImageLightbox(props: {
+  src: string;
+  name: string;
+  meta?: string;
+  onClose: () => void;
+}): JSX.Element {
+  const { onClose } = props;
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  // 打开期间锁住底层滚动，滚轮不会把背后的列表也滚走
+  useEffect(() => {
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, []);
+
+  return createPortal(
+    // 点击遮罩关闭；点图片本身不关闭（stopPropagation 只加在 img 上）
+    <div className="imageLightbox" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="imageLightboxInner">
+        <img src={props.src} alt={props.name} draggable={false} onClick={(event) => event.stopPropagation()} />
+        <div className="imageLightboxCap">
+          <strong>{props.name}</strong>
+          {props.meta && <small>{props.meta}</small>}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 function ReferenceImagePanel(props: {
   project: Project;
   value: ReferenceDraft[];
@@ -1612,6 +1796,11 @@ function ReferenceImagePanel(props: {
   onReferenceStrengthChange: (value: ReferenceStrength) => void;
 }): JSX.Element {
   const { t } = useTranslation();
+  const [preview, setPreview] = useState<ReferenceDraft | null>(null);
+
+  const fileNameOf = (image: ReferenceDraft): string =>
+    image.name ?? image.path.split(/[\\/]/).pop() ?? image.path;
+
   async function importReferences(): Promise<void> {
     const imported = await props.runTask(
       t("busy.importRef"),
@@ -1634,14 +1823,27 @@ function ReferenceImagePanel(props: {
     props.onChange(props.value.map((image) => (image.path === pathValue ? { ...image, role } : image)));
   }
 
+  const previewMeta = preview
+    ? [
+        preview.width && preview.height ? `${preview.width} × ${preview.height}` : "",
+        preview.bytes ? `${Math.max(1, Math.round(preview.bytes / 1024))} KB` : ""
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "";
+
   return (
     <div className="referencePanel">
       <div className="referenceHeader">
-        <div>
+        <div className="referenceTitleRow">
           <strong>{t("generate.refImages")}</strong>
-          <span>{props.value.length}/4 · {t("generate.refHint")}</span>
+          <span className="referenceCount">{props.value.length}/4</span>
         </div>
         <div className="referenceActions">
+          <button className="ghostButton" type="button" onClick={importReferences} disabled={props.value.length >= 4}>
+            <Plus size={15} />
+            {t("generate.importRef")}
+          </button>
           <label className="strengthControl">
             <span>{t("generate.refStrength")}</span>
             <select
@@ -1656,44 +1858,62 @@ function ReferenceImagePanel(props: {
               ))}
             </select>
           </label>
-          <button className="ghostButton" type="button" onClick={importReferences} disabled={props.value.length >= 4}>
-            <Plus size={15} />
-            {t("generate.importRef")}
-          </button>
         </div>
       </div>
 
-      {props.value.length === 0 ? (
-        <EmptyState text={t("generate.noRefs")} />
-      ) : (
+      {/* 未导入任何参考图时只保留上方菜单行，不占用额外高度 */}
+      {props.value.length > 0 && (
         <div className="referenceGrid">
           {props.value.map((image) => (
             <article key={image.path} className="referenceCard">
-              <div className="referenceThumb">
-                {image.dataUrl ? <img src={image.dataUrl} alt={image.name ?? image.path} /> : <Image size={34} />}
-              </div>
-              <div className="referenceMeta">
-                <strong>{image.name ?? image.path.split(/[\\/]/).pop()}</strong>
-                <small>{image.width && image.height ? `${image.width}x${image.height}` : "项目素材"}</small>
-                <select value={image.role} onChange={(event) => updateRole(image.path, event.target.value as ReferenceImageRole)}>
-                  {referenceRoles.map((role) => (
-                    <option key={role.value} value={role.value}>
-                      {t(role.label)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <button
-                className="referenceRemove"
-                type="button"
-                title={t("generate.removeRef")}
-                onClick={() => props.onChange(props.value.filter((item) => item.path !== image.path))}
+              <div
+                className="referenceThumb"
+                title={t("generate.refPreviewHint")}
+                onDoubleClick={() => {
+                  if (image.dataUrl) setPreview(image);
+                }}
               >
-                <Trash2 size={13} />
-              </button>
+                {image.dataUrl ? (
+                  <img src={image.dataUrl} alt={fileNameOf(image)} draggable={false} />
+                ) : (
+                  <Image size={22} />
+                )}
+                <button
+                  className="referenceRemove"
+                  type="button"
+                  title={t("generate.removeRef")}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    props.onChange(props.value.filter((item) => item.path !== image.path));
+                  }}
+                >
+                  <Trash2 size={11} />
+                </button>
+              </div>
+              <strong className="referenceName" title={fileNameOf(image)}>{fileNameOf(image)}</strong>
+              <select
+                aria-label={t("generate.refRole", { name: fileNameOf(image) })}
+                value={image.role}
+                onChange={(event) => updateRole(image.path, event.target.value as ReferenceImageRole)}
+              >
+                {referenceRoles.map((role) => (
+                  <option key={role.value} value={role.value}>
+                    {t(role.label)}
+                  </option>
+                ))}
+              </select>
             </article>
           ))}
         </div>
+      )}
+
+      {preview && preview.dataUrl && (
+        <ImageLightbox
+          src={preview.dataUrl}
+          name={fileNameOf(preview)}
+          meta={previewMeta}
+          onClose={() => setPreview(null)}
+        />
       )}
     </div>
   );
@@ -1701,15 +1921,54 @@ function ReferenceImagePanel(props: {
 
 function AssetsPage(props: {
   project: Project;
+  historyEntries: GenerationHistoryEntry[];
   exportDirectory: string;
   runTask: <T>(label: string, task: () => Promise<T>, success?: (result: T) => string) => Promise<T | null>;
   refreshProject: () => Promise<Project | null>;
+  refreshHistory: () => Promise<void>;
   onOpenSettings: () => void;
   onUseAsReference: (asset: Asset, filePath: string) => void;
-  onHistoryChanged: () => void;
+  onOpenHistory: (entry: GenerationHistoryEntry) => void;
 }): JSX.Element {
   const { t } = useTranslation();
   const canCopy = Boolean(props.exportDirectory.trim());
+
+  const items: LibraryItem[] = useMemo(() => {
+    const untitled = t("assets.untitled");
+    const knownRunIds = new Set(props.historyEntries.map((entry) => entry.runId));
+    const fromHistory: LibraryItem[] = props.historyEntries.map((entry) => ({
+      runId: entry.runId,
+      entry,
+      name: entry.name || entry.input?.name || untitled,
+      assetType: (entry.input?.assetType ?? "other") as AssetType,
+      state: resolveLibraryAssetState(entry),
+      createdAt: entry.createdAt,
+      count: entry.grid?.count ?? entry.input?.count ?? 0,
+      gridImagePath: entry.grid?.gridImagePath ?? "",
+      files: entry.files ?? [],
+      metadataPath: entry.metadataPath,
+      assetId: entry.assetId,
+      description: entry.input?.description ?? ""
+    }));
+    // 兼容历史台账早于本次改版的老项目：有素材但没历史记录的批次照常展示
+    const orphans: LibraryItem[] = props.project.assets
+      .filter((asset) => !knownRunIds.has(asset.id))
+      .map((asset) => ({
+        runId: asset.id,
+        entry: null,
+        name: asset.name,
+        assetType: asset.type,
+        state: "sliced" as LibraryAssetState,
+        createdAt: asset.createdAt,
+        count: asset.files.length,
+        gridImagePath: "",
+        files: asset.files,
+        metadataPath: asset.metadataPath,
+        assetId: asset.id,
+        description: asset.description
+      }));
+    return [...fromHistory, ...orphans].sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+  }, [props.historyEntries, props.project.assets, t]);
 
   async function copyAll(): Promise<void> {
     const targetDirectory = await props.runTask(
@@ -1722,16 +1981,49 @@ function AssetsPage(props: {
     }
   }
 
+  async function rename(item: LibraryItem, name: string): Promise<void> {
+    const bridge = window.topspeedBuilder;
+    const result = item.entry
+      ? await bridge.renameGenerationHistory(props.project.path, item.runId, name)
+      : await bridge.renameAsset(props.project.path, item.runId, name);
+    if (result.ok) {
+      await props.refreshHistory();
+      await props.refreshProject();
+    }
+  }
+
+  async function remove(item: LibraryItem): Promise<void> {
+    const hint =
+      item.state === "sliced"
+        ? t("assets.removeSlicedHint")
+        : item.state === "grid"
+          ? t("assets.removeGridHint")
+          : t("assets.removeEmptyHint");
+    if (!window.confirm(`${hint}\n${t("history.removeConfirm")}`)) return;
+    const result = await window.topspeedBuilder.removeGenerationHistory(props.project.path, item.runId);
+    if (result.ok) {
+      await props.refreshHistory();
+      await props.refreshProject();
+    }
+  }
+
   return (
     <section className="panel wide">
-      <PanelTitle icon={Image} title={t("assets.title")} subtitle={t("assets.subtitle", { count: props.project.assets.length })} />
+      <PanelTitle
+        icon={Image}
+        title={t("assets.title")}
+        subtitle={t("assets.subtitle", { count: items.length })}
+      />
       {!canCopy && (
         <div className="inlineNote">
           {t("assets.noDirHint")}
         </div>
       )}
       <div className="assetActions">
-        <button className="ghostButton" onClick={() => void props.refreshProject()}>
+        <button
+          className="ghostButton"
+          onClick={() => void props.refreshProject().then(() => props.refreshHistory())}
+        >
           <RefreshCw size={16} />
           {t("preview.refresh")}
         </button>
@@ -1747,19 +2039,343 @@ function AssetsPage(props: {
         )}
       </div>
       <div className="assetGrid">
-        {props.project.assets.length === 0 && <EmptyState text={t("assets.empty")} />}
-        {props.project.assets.map((asset) => (
-          <AssetCard
-            key={asset.id}
+        {items.length === 0 && <EmptyState text={t("assets.empty")} />}
+        {items.map((item) => (
+          <LibraryCard
+            key={item.runId}
             project={props.project}
-            asset={asset}
-            runTask={props.runTask}
+            item={item}
             onUseAsReference={props.onUseAsReference}
-            onDelete={async () => { await props.refreshProject(); props.onHistoryChanged(); }}
+            onOpenHistory={props.onOpenHistory}
+            onRename={(name) => rename(item, name)}
+            onDelete={() => remove(item)}
           />
         ))}
       </div>
     </section>
+  );
+}
+
+/** 素材库卡片：按状态（无图 / 有整图未切图 / 已切图）渲染不同主体；缩略图双击放大查看细节 */
+function LibraryCard(props: {
+  project: Project;
+  item: LibraryItem;
+  onUseAsReference: (asset: Asset, filePath: string) => void;
+  onOpenHistory: (entry: GenerationHistoryEntry) => void;
+  onRename: (name: string) => Promise<void>;
+  onDelete: () => Promise<void>;
+}): JSX.Element {
+  const { t } = useTranslation();
+  const { item } = props;
+  /** 切图列表：文件路径 + 缩略图 dataUrl，顺序与 item.files 一致 */
+  const [slices, setSlices] = useState<{ file: string; url: string }[]>([]);
+  /** 当前选中的切图下标 —— 「参考」「定位」都作用于它，双击则放大它 */
+  const [selectedSlice, setSelectedSlice] = useState(0);
+  const [gridThumb, setGridThumb] = useState("");
+  const [lightbox, setLightbox] = useState<{ file: string; src: string; name: string; meta: string } | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [nameDraft, setNameDraft] = useState(item.name);
+  const [saving, setSaving] = useState(false);
+  /** 卡片是否已进入视野：缩略图必须「看得见才加载」，否则一屏几十条记录会瞬间压垮渲染进程 */
+  const cardRef = useRef<HTMLElement | null>(null);
+  const [inView, setInView] = useState(false);
+
+  useEffect(() => {
+    setNameDraft(item.name);
+  }, [item.name]);
+
+  useEffect(() => {
+    if (inView) return;
+    const node = cardRef.current;
+    if (!node) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setInView(true);
+      return;
+    }
+    // 提前 240px 就开始加载，滚动时不至于看到空白格
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setInView(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "240px 0px" }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [inView]);
+
+  useEffect(() => {
+    if (!inView) return;
+    let alive = true;
+    const bridge = window.topspeedBuilder;
+    setSlices([]);
+    setSelectedSlice(0);
+    setGridThumb("");
+
+    if (item.state === "grid" && item.gridImagePath) {
+      // 卡片只用 160px 缓存缩略图；需要看细节时再取大图
+      bridge
+        .readImageThumbnail(props.project.path, item.runId)
+        .then((result) => {
+          if (alive && result.ok && result.data) setGridThumb(result.data);
+        })
+        .catch(() => undefined);
+      return () => {
+        alive = false;
+      };
+    }
+
+    if (item.state === "sliced") {
+      // 不再截断：生成上限 16 张时 4×4 一屏放得下，截到 12 会整整少一行。
+      // 但必须走 160px 缩略图通道 —— 一屏十几条记录 × 16 张 = 几百张图，
+      // 按 1024px 读回会让渲染主线程连续解大图，直接饿死键盘 / 输入法事件。
+      const pngFiles = item.files.filter((file) => file.toLowerCase().endsWith(".png"));
+      Promise.all(
+        pngFiles.map((file) =>
+          bridge
+            .readImageThumbnailDataUrl(props.project.path, file, 160)
+            .then((result) => (result.ok && result.data ? result.data : ""))
+        )
+      )
+        .then((urls) => {
+          if (alive) setSlices(pngFiles.map((file, index) => ({ file, url: urls[index] ?? "" })));
+        })
+        .catch(() => undefined);
+    }
+    return () => {
+      alive = false;
+    };
+  }, [inView, props.project.path, item.runId, item.state, item.gridImagePath, item.files.length]);
+
+  const asset = item.assetId ? props.project.assets.find((entry) => entry.id === item.assetId) : undefined;
+  const firstFile = item.files.find((file) => file.toLowerCase().endsWith(".png")) ?? "";
+  /** 选中下标越界保护（删除切图 / 记录刷新后下标可能失效） */
+  const activeIndex = slices.length === 0 ? 0 : Math.min(selectedSlice, slices.length - 1);
+  const activeSlice = slices[activeIndex];
+  // 一屏最多铺 16 张（4 列 × 4 行）；超出的数量压在最后一格角标上
+  const visibleSlices = slices.slice(0, 16);
+  const hiddenSlices = slices.length - visibleSlices.length;
+
+  async function openGridPreview(): Promise<void> {
+    if (!item.gridImagePath) return;
+    const result = await window.topspeedBuilder.readImageDataUrl(props.project.path, item.gridImagePath);
+    if (result.ok && result.data) {
+      setLightbox({
+        file: item.gridImagePath,
+        src: result.data,
+        name: item.name,
+        meta: t("assets.metaGrid", { count: item.count })
+      });
+    }
+  }
+
+  async function openSlicePreview(index: number): Promise<void> {
+    const slice = slices[index];
+    if (!slice) return;
+    const meta = t("assets.metaSlice", { index: index + 1, count: slices.length });
+    // 先用 160px 缩略图秒开，再按需取 1024px 预览替换（只看细节时才付解码代价）
+    setLightbox({ file: slice.file, src: slice.url, name: item.name, meta });
+    const result = await window.topspeedBuilder.readImageDataUrl(props.project.path, slice.file);
+    if (result.ok && result.data) {
+      setLightbox((current) =>
+        current && current.file === slice.file ? { ...current, src: result.data as string } : current
+      );
+    }
+  }
+
+  async function saveName(): Promise<void> {
+    const next = nameDraft.trim();
+    if (!next || next === item.name) {
+      setEditing(false);
+      setNameDraft(item.name);
+      return;
+    }
+    setSaving(true);
+    try {
+      await props.onRename(next);
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <article className="assetCard libraryCard" ref={cardRef}>
+      <div className="libraryHead">
+        <span className={`libraryBadge ${item.state}`}>{t(`assets.state.${item.state}`)}</span>
+        {editing ? (
+          <div className="libraryRenameRow">
+            <input
+              autoFocus
+              value={nameDraft}
+              maxLength={80}
+              onChange={(event) => setNameDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void saveName();
+                if (event.key === "Escape") {
+                  setEditing(false);
+                  setNameDraft(item.name);
+                }
+              }}
+            />
+            <button className="ghostButton" type="button" disabled={saving} onClick={() => void saveName()}>
+              <Check size={14} />
+            </button>
+            <button
+              className="ghostButton"
+              type="button"
+              disabled={saving}
+              onClick={() => {
+                setEditing(false);
+                setNameDraft(item.name);
+              }}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ) : (
+          <div className="libraryTitleRow">
+            <strong title={item.name}>{item.name}</strong>
+            <button
+              className="libraryIconButton"
+              type="button"
+              title={t("assets.rename")}
+              onClick={() => setEditing(true)}
+            >
+              <Pencil size={13} />
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="libraryMedia">
+        {item.state === "empty" ? (
+          <div className="libraryPlaceholder">
+            <FileText size={30} />
+            <span>{t("assets.state.emptyHint")}</span>
+            {item.description && <small>{item.description}</small>}
+          </div>
+        ) : item.state === "grid" ? (
+          <button
+            className="libraryThumb solo"
+            type="button"
+            title={t("assets.previewHint")}
+            onDoubleClick={() => void openGridPreview()}
+          >
+            {gridThumb ? <img src={gridThumb} alt={item.name} draggable={false} /> : <Loader2 size={20} className="spin" />}
+          </button>
+        ) : (
+          <div className="libraryThumbGrid">
+            {visibleSlices.length === 0
+              ? Array.from({ length: 4 }, (_, index) => (
+                  <span key={index} className="libraryThumb grid">
+                    <Loader2 size={13} className="spin" />
+                  </span>
+                ))
+              : visibleSlices.map((slice, index) => (
+                  <button
+                    key={`${item.runId}-${slice.file}`}
+                    className={`libraryThumb grid${index === activeIndex ? " selected" : ""}`}
+                    type="button"
+                    aria-pressed={index === activeIndex}
+                    title={t("assets.selectHint")}
+                    onClick={() => setSelectedSlice(index)}
+                    onDoubleClick={() => void openSlicePreview(index)}
+                  >
+                    {slice.url ? <img src={slice.url} alt="" draggable={false} /> : <Image size={14} />}
+                    {index === activeIndex && <span className="libraryThumbIndex">{index + 1}</span>}
+                    {hiddenSlices > 0 && index === visibleSlices.length - 1 && (
+                      <span className="libraryThumbMore">+{hiddenSlices}</span>
+                    )}
+                  </button>
+                ))}
+          </div>
+        )}
+      </div>
+
+      <div className="assetBody">
+        <span>
+          {t("assetType." + item.assetType)} · {item.count} {t("history.unit")}
+          {item.state === "sliced" && slices.length > 0 && ` · ${t("assets.selectedIndex", { index: activeIndex + 1 })}`}
+        </span>
+        <small>{formatTimestamp(item.createdAt)}</small>
+      </div>
+
+      <div className="assetActions">
+        {item.entry && (
+          <button className="ghostButton" onClick={() => props.onOpenHistory(item.entry!)}>
+            <History size={15} />
+            {t("assets.openHistory")}
+          </button>
+        )}
+        {item.gridImagePath && item.state !== "grid" && (
+          <button className="ghostButton" onClick={() => void openGridPreview()}>
+            <Image size={15} />
+            {t("assets.viewGrid")}
+          </button>
+        )}
+        {activeSlice && asset && (
+          <button
+            className="ghostButton"
+            title={t("assets.useAsReferenceHint", { index: activeIndex + 1, count: slices.length })}
+            onClick={() => props.onUseAsReference(asset, activeSlice.file)}
+          >
+            <Image size={15} />
+            {t("assets.useAsReference")}
+          </button>
+        )}
+        <button
+          className="ghostButton"
+          title={t("preview.locate")}
+          onClick={() => {
+            // 已切图时优先定位「当前选中的那一张」，否则回到记录级文件（metadata / 首图）
+            const file = item.state === "sliced" && activeSlice ? activeSlice.file : item.metadataPath ?? firstFile;
+            if (file) {
+              void window.topspeedBuilder
+                .showProjectItemInFolder(props.project.path, file)
+                .catch(() => undefined);
+            }
+          }}
+        >
+          <FolderOpen size={15} />
+          {t("preview.locate")}
+        </button>
+        <button
+          className="ghostButton danger"
+          onClick={() => void props.onDelete()}
+        >
+          <Trash2 size={15} />
+          {t("assets.remove")}
+        </button>
+      </div>
+
+      {lightbox && (
+        <ImageLightbox
+          src={lightbox.src}
+          name={lightbox.name}
+          meta={lightbox.meta}
+          onClose={() => setLightbox(null)}
+        />
+      )}
+    </article>
+  );
+}
+
+/**
+ * 设置页「拉取模型 / 检测连接」共用的反馈槽位：固定在「检测连接」按钮后方。
+ * 定宽 + 单行省略，长报错不会换行、也不会把设置面板撑宽；悬停 title 看完整内容。
+ */
+/** 设置页「拉取模型 / 检测连接」的反馈：文案由触发操作自行组装，组件只负责渲染 */
+type ModelActionFeedback = { ok: boolean; text: string };
+
+function ModelActionStatus(props: { feedback: ModelActionFeedback | null }): JSX.Element | null {
+  if (!props.feedback) return null;
+  return (
+    <span className={`modelStatus ${props.feedback.ok ? "ok" : "fail"}`} title={props.feedback.text}>
+      {props.feedback.text}
+    </span>
   );
 }
 
@@ -1770,11 +2386,19 @@ function SettingsPage(props: {
 }): JSX.Element {
   const { t } = useTranslation();
   const [draft, setDraft] = useState<AppSettings>(props.settings);
-  const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
+  const [testResult, setTestResult] = useState<ModelActionFeedback | null>(null);
   const [dirFeedback, setDirFeedback] = useState<{ ok: boolean; detail: string } | null>(null);
   const [testing, setTesting] = useState(false);
   const [fetchingModels, setFetchingModels] = useState(false);
+  // 提示词助手配置与出图配置分开存储（settings.json 的 promptAssistant 子键），
+  // 但共用底部同一个「保存」按钮，避免出现两个保存入口、改了不知道哪个生效。
+  const [paDraft, setPaDraft] = useState<PromptAssistantSettings | null>(null);
   useEffect(() => setDraft(props.settings), [props.settings]);
+  useEffect(() => {
+    window.topspeedBuilder.getPromptAssistant().then((res) => {
+      if (res.ok && res.data) setPaDraft(res.data);
+    }).catch(() => undefined);
+  }, []);
 
   const modelOptions = useMemo(() => {
     const known = new Set(draft.availableModels);
@@ -1792,12 +2416,16 @@ function SettingsPage(props: {
     try {
       const res = await window.topspeedBuilder.testConnection(draft);
       if (res.ok && res.data) {
-        setTestResult({ ok: res.data.ok, detail: res.data.detail });
+        setTestResult(
+          res.data.ok
+            ? { ok: true, text: `${t("settings.testOk")} · ${t("settings.testPass")}` }
+            : { ok: false, text: `${t("settings.testFail")}: ${res.data.detail}` }
+        );
       } else {
-        setTestResult({ ok: false, detail: res.error ?? "检测请求失败" });
+        setTestResult({ ok: false, text: `${t("settings.testFail")}: ${res.error ?? "检测请求失败"}` });
       }
     } catch (e) {
-      setTestResult({ ok: false, detail: String(e) });
+      setTestResult({ ok: false, text: `${t("settings.testFail")}: ${String(e)}` });
     } finally {
       setTesting(false);
     }
@@ -1811,17 +2439,14 @@ function SettingsPage(props: {
       const res = await window.topspeedBuilder.fetchModels(draft);
       if (res.ok && res.data) {
         const models = res.data;
-        setDraft((current) => ({
-          ...current,
-          availableModels: models,
-          model: current.model && models.includes(current.model) ? current.model : (models[0] ?? current.model ?? "")
-        }));
-        setTestResult({ ok: true, detail: t("settings.modelsFetched", { count: models.length }) });
+        // 同提示词助手：拉取列表不改动已选模型，只在原本未选时才取第一项
+        setDraft((current) => ({ ...current, availableModels: models, model: current.model || models[0] || "" }));
+        setTestResult({ ok: true, text: t("settings.modelsFetched", { count: models.length }) });
       } else {
-        setTestResult({ ok: false, detail: res.error ?? t("settings.fetchModelsFail") });
+        setTestResult({ ok: false, text: `${t("settings.fetchModelsFail")}${res.error ? `: ${res.error}` : ""}` });
       }
     } catch (error) {
-      setTestResult({ ok: false, detail: error instanceof Error ? error.message : String(error) });
+      setTestResult({ ok: false, text: `${t("settings.fetchModelsFail")}: ${error instanceof Error ? error.message : String(error)}` });
     } finally {
       setFetchingModels(false);
     }
@@ -1890,18 +2515,15 @@ function SettingsPage(props: {
           placeholder={t("settings.apiBaseUrlHint")}
           onChange={(apiBaseUrl) => setDraft({ ...draft, apiBaseUrl })}
         />
-        <TextInput label={t("settings.apiKey")} value={draft.apiKey} type="password" onChange={(apiKey) => setDraft({ ...draft, apiKey })} />
-        <button
-          className="ghostButton"
-          disabled={fetchingModels}
-          onClick={fetchModels}
-        >
-          {fetchingModels ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
-          <span>{fetchingModels ? t("settings.fetchingModels") : t("settings.fetchModels")}</span>
-        </button>
-      </div>
-      <div className="modelActionBlock">
-        <label className="field">
+        <TextInput
+          className="apiKeyField"
+          label={t("settings.apiKey")}
+          value={draft.apiKey}
+          type="password"
+          onChange={(apiKey) => setDraft({ ...draft, apiKey })}
+        />
+        {/* 与上一行共用第一列：模型下拉因此和 API 地址输入框严格等宽 */}
+        <label className="field apiModelField">
           <span>{t("settings.model")}</span>
           <select value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })}>
             {modelOptions.length === 0 && <option value="">{t("settings.modelPlaceholder")}</option>}
@@ -1910,62 +2532,48 @@ function SettingsPage(props: {
             ))}
           </select>
         </label>
-        <button
-          className="ghostButton"
-          style={{ whiteSpace: "nowrap" }}
-          disabled={testing}
-          onClick={runTest}
-        >
-          {testing ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
-          <span>{testing ? t("settings.testing") : t("settings.testConnection")}</span>
-        </button>
-        {testResult && (
-          <span style={{ padding: "6px 0", fontSize: 13, color: testResult.ok ? "#4ade80" : "#f87171", maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {testResult.ok ? `${t("settings.testOk")} · ${testResult.detail}` : `${t("settings.testFail")}: ${testResult.detail}`}
-          </span>
-        )}
+        <div className="apiModelActions">
+          <button className="ghostButton" disabled={fetchingModels} onClick={fetchModels}>
+            {fetchingModels ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+            <span>{fetchingModels ? t("settings.fetchingModels") : t("settings.fetchModels")}</span>
+          </button>
+          <button className="ghostButton" disabled={testing} onClick={runTest}>
+            {testing ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+            <span>{testing ? t("settings.testing") : t("settings.testConnection")}</span>
+          </button>
+          <ModelActionStatus feedback={testResult} />
+        </div>
       </div>
-      <PromptAssistantSettingsBlock />
+      <PromptAssistantSettingsBlock draft={paDraft} onChange={setPaDraft} />
       <button
         className="primaryButton"
         onClick={async () => {
-          const saved = await props.runTask(t("settings.save"), () => unwrap(window.topspeedBuilder.saveSettings(draft)));
+          const saved = await props.runTask(t("settings.save"), async () => {
+            const next = await unwrap(window.topspeedBuilder.saveSettings(draft));
+            if (paDraft) await unwrap(window.topspeedBuilder.savePromptAssistant(paDraft));
+            return next;
+          });
           if (saved) props.onSaved(saved);
         }}
       >
         <Save size={18} />
         {t("settings.save")}
       </button>
-      <McpCliInfoBlock />
     </section>
   );
 }
 
-function McpCliInfoBlock(): JSX.Element {
+/** 提示词助手配置区块：受控组件，草稿由设置页统一持有，与出图配置共用底部「保存」按钮 */
+function PromptAssistantSettingsBlock(props: {
+  draft: PromptAssistantSettings | null;
+  onChange: (next: PromptAssistantSettings) => void;
+}): JSX.Element {
   const { t } = useTranslation();
-  return (
-    <>
-      <div className="sectionRule" />
-      <strong>{t("settings.mcpCliSection")}</strong>
-      <div className="inlineNote">{t("settings.mcpCliHint")}</div>
-      <div className="inlineNote compactNote">{t("settings.mcpCliMcp")}</div>
-      <div className="inlineNote compactNote">{t("settings.mcpCliCli")}</div>
-    </>
-  );
-}
-
-function PromptAssistantSettingsBlock(): JSX.Element {
-  const { t } = useTranslation();
-  const [draft, setDraft] = useState<PromptAssistantSettings | null>(null);
-  const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
+  const draft = props.draft;
+  const setDraft = props.onChange;
+  const [testResult, setTestResult] = useState<ModelActionFeedback | null>(null);
   const [testing, setTesting] = useState(false);
   const [fetchingModels, setFetchingModels] = useState(false);
-
-  useEffect(() => {
-    window.topspeedBuilder.getPromptAssistant().then((res) => {
-      if (res.ok && res.data) setDraft(res.data);
-    }).catch(() => undefined);
-  }, []);
 
   const modelOptions = useMemo(() => {
     const known = new Set(draft ? draft.availableModels : []);
@@ -1982,10 +2590,17 @@ function PromptAssistantSettingsBlock(): JSX.Element {
     setTestResult(null);
     try {
       const res = await window.topspeedBuilder.promptAssistantTest(draft);
-      if (res.ok && res.data) setTestResult({ ok: res.data.ok, detail: res.data.detail });
-      else setTestResult({ ok: false, detail: res.error ?? "检测请求失败" });
+      if (res.ok && res.data) {
+        setTestResult(
+          res.data.ok
+            ? { ok: true, text: `${t("settings.testOk")} · ${t("settings.testPass")}` }
+            : { ok: false, text: `${t("settings.testFail")}: ${res.data.detail}` }
+        );
+      } else {
+        setTestResult({ ok: false, text: `${t("settings.testFail")}: ${res.error ?? "检测请求失败"}` });
+      }
     } catch (e) {
-      setTestResult({ ok: false, detail: String(e) });
+      setTestResult({ ok: false, text: `${t("settings.testFail")}: ${String(e)}` });
     } finally {
       setTesting(false);
     }
@@ -1998,25 +2613,19 @@ function PromptAssistantSettingsBlock(): JSX.Element {
       const res = await window.topspeedBuilder.promptAssistantFetchModels(draft);
       if (res.ok && res.data) {
         const models = res.data;
-        setDraft((cur) =>
-          cur
-            ? { ...cur, availableModels: models, model: cur.model && models.includes(cur.model) ? cur.model : (models[0] ?? cur.model ?? "") }
-            : cur
-        );
+        // 只刷新可选列表，不擅自改动已选模型：当前模型即使不在新列表中也保留，
+        // 避免「拉取模型」这个看似只读的操作把用户选好的模型顶掉。
+        setDraft({ ...draft, availableModels: models, model: draft.model || models[0] || "" });
+        // 与出图模型的「拉取模型」保持一致的反馈文案
+        setTestResult({ ok: true, text: t("settings.modelsFetched", { count: models.length }) });
       } else {
-        setTestResult({ ok: false, detail: res.error ?? t("settings.fetchModelsFail") });
+        setTestResult({ ok: false, text: `${t("settings.fetchModelsFail")}${res.error ? `: ${res.error}` : ""}` });
       }
     } catch (e) {
-      setTestResult({ ok: false, detail: e instanceof Error ? e.message : String(e) });
+      setTestResult({ ok: false, text: `${t("settings.fetchModelsFail")}: ${e instanceof Error ? e.message : String(e)}` });
     } finally {
       setFetchingModels(false);
     }
-  };
-
-  const save = async () => {
-    if (!draft) return;
-    const saved = await window.topspeedBuilder.savePromptAssistant(draft);
-    if (saved.ok && saved.data) setDraft(saved.data);
   };
 
   return (
@@ -2030,14 +2639,15 @@ function PromptAssistantSettingsBlock(): JSX.Element {
           placeholder={t("settings.apiBaseUrlHint")}
           onChange={(baseUrl) => setDraft({ ...draft, baseUrl })}
         />
-        <TextInput label={t("settings.paApiKey")} value={draft.apiKey} type="password" onChange={(apiKey) => setDraft({ ...draft, apiKey })} />
-        <button className="ghostButton" disabled={fetchingModels} onClick={fetchModels}>
-          {fetchingModels ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
-          <span>{fetchingModels ? t("settings.fetchingModels") : t("settings.fetchModels")}</span>
-        </button>
-      </div>
-      <div className="modelActionBlock">
-        <label className="field">
+        <TextInput
+          className="apiKeyField"
+          label={t("settings.paApiKey")}
+          value={draft.apiKey}
+          type="password"
+          onChange={(apiKey) => setDraft({ ...draft, apiKey })}
+        />
+        {/* 与出图区块同样的两行布局，模型下拉与 API 地址输入框等宽 */}
+        <label className="field apiModelField">
           <span>{t("settings.paModel")}</span>
           <select value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })}>
             {modelOptions.length === 0 && <option value="">{t("settings.modelPlaceholder")}</option>}
@@ -2046,19 +2656,17 @@ function PromptAssistantSettingsBlock(): JSX.Element {
             ))}
           </select>
         </label>
-        <button className="ghostButton" style={{ whiteSpace: "nowrap" }} disabled={testing} onClick={runTest}>
-          {testing ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
-          <span>{testing ? t("settings.testing") : t("settings.testConnection")}</span>
-        </button>
-        {testResult && (
-          <span style={{ padding: "6px 0", fontSize: 13, color: testResult.ok ? "#4ade80" : "#f87171" }}>
-            {testResult.ok ? `${t("settings.testOk")} · ${testResult.detail}` : `${t("settings.testFail")}: ${testResult.detail}`}
-          </span>
-        )}
-        <button className="primaryButton" onClick={save}>
-          <Save size={18} />
-          {t("settings.save")}
-        </button>
+        <div className="apiModelActions">
+          <button className="ghostButton" disabled={fetchingModels} onClick={fetchModels}>
+            {fetchingModels ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+            <span>{fetchingModels ? t("settings.fetchingModels") : t("settings.fetchModels")}</span>
+          </button>
+          <button className="ghostButton" disabled={testing} onClick={runTest}>
+            {testing ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+            <span>{testing ? t("settings.testing") : t("settings.testConnection")}</span>
+          </button>
+          <ModelActionStatus feedback={testResult} />
+        </div>
       </div>
     </>
   );
@@ -2234,7 +2842,7 @@ function PromptAssistantDialog(props: {
             <textarea className="paRaw" readOnly value={rawOutput} />
           </div>
         )}
-        {error && <div className="inlineNote" style={{ color: "#f87171" }}>{error}</div>}
+        {error && <div className="inlineNote paErrorBox" style={{ color: "#f87171" }}>{error}</div>}
       </div>
     </div>
   );
@@ -2266,105 +2874,6 @@ function DirectoryPicker(props: {
   );
 }
 
-function AssetCard(props: {
-  project: Project;
-  asset: Asset;
-  runTask: <T>(label: string, task: () => Promise<T>, success?: (result: T) => string) => Promise<T | null>;
-  onUseAsReference?: (asset: Asset, filePath: string) => void;
-  onDelete?: () => Promise<void>;
-}): JSX.Element {
-  const { t } = useTranslation();
-  const pngFiles = props.asset.files.filter((file) => file.toLowerCase().endsWith(".png")).slice(0, 24);
-  const [thumbnails, setThumbnails] = useState<string[]>([]);
-  const [activeIndex, setActiveIndex] = useState(0);
-  const previewFile = pngFiles[activeIndex % Math.max(pngFiles.length, 1)] ?? "";
-
-  useEffect(() => {
-    let alive = true;
-    setThumbnails([]);
-    setActiveIndex(0);
-    if (pngFiles.length === 0) {
-      return () => { alive = false; };
-    }
-    Promise.all(
-      pngFiles.map((file) =>
-        window.topspeedBuilder.readImageDataUrl(props.project.path, file).then((result) => (result.ok && result.data ? result.data : ""))
-      )
-    ).then((urls) => {
-      if (alive) setThumbnails(urls);
-    });
-    return () => {
-      alive = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.project.path, props.asset.id]);
-
-  const activeThumbnail = thumbnails[activeIndex % Math.max(thumbnails.length, 1)] ?? "";
-  const firstFile = pngFiles[0] ?? props.asset.metadataPath;
-
-  return (
-    <article className="assetCard">
-      <div className="assetPreview">{activeThumbnail ? <img src={activeThumbnail} alt={props.asset.name} /> : <Boxes size={42} />}</div>
-      {pngFiles.length > 1 && (
-        <div className="assetThumbs">
-          {thumbnails.map((url, index) => (
-            <button
-              key={pngFiles[index]}
-              type="button"
-              className={index === activeIndex ? "active" : ""}
-              title={pngFiles[index]}
-              onClick={() => setActiveIndex(index)}
-            >
-              {url ? <img src={url} alt="" /> : null}
-            </button>
-          ))}
-        </div>
-      )}
-      <div className="assetBody">
-        <strong>{props.asset.name}</strong>
-        <span>{t("assetType." + props.asset.type)} · {props.asset.files.length} {t("preview.files")}</span>
-        <small>{props.asset.createdAt ? new Date(props.asset.createdAt).toLocaleString() : ""}</small>
-      </div>
-      <div className="assetActions" style={{ marginTop: "auto" }}>
-        {firstFile && props.onUseAsReference && (
-          <button className="ghostButton" onClick={() => props.onUseAsReference?.(props.asset, firstFile)}>
-            <Image size={15} />
-            参考
-          </button>
-        )}
-        <button
-          className="ghostButton"
-          onClick={() => {
-            const file = props.asset.metadataPath ?? previewFile;
-            if (file) {
-              void props.runTask(t("busy.locateFile"), () => unwrap(window.topspeedBuilder.showProjectItemInFolder(props.project.path, file)));
-            }
-          }}
-        >
-          <FolderOpen size={15} />
-          {t("preview.locate")}
-        </button>
-        <button
-          className="ghostButton"
-          style={{ borderColor: "rgba(255,45,149,0.3)", color: "var(--magenta)" }}
-          onClick={async () => {
-            if (!window.confirm(t("preview.deleteConfirm", { name: props.asset.name }))) return;
-            const result = await props.runTask(
-              t("busy.deleteAsset"),
-              () => unwrap(window.topspeedBuilder.deleteAsset(props.project.path, props.asset.id)),
-              () => t("preview.deleteDone")
-            );
-            if (result && props.onDelete) await props.onDelete();
-          }}
-        >
-          <Trash2 size={15} />
-          删除
-        </button>
-      </div>
-    </article>
-  );
-}
-
 function PanelTitle(props: { icon: typeof Home; title: string; subtitle?: string }): JSX.Element {
   const Icon = props.icon;
   return (
@@ -2387,6 +2896,8 @@ function TextInput(props: {
   type?: string;
   disabled?: boolean;
   placeholder?: string;
+  /** 追加到 .field 上的类，用于在网格里指定列/跨列 */
+  className?: string;
   onChange: (value: string) => void;
 }): JSX.Element {
   const [local, setLocal] = useState(props.value);
@@ -2428,7 +2939,7 @@ function TextInput(props: {
   );
 
   return (
-    <label className="field">
+    <label className={props.className ? `field ${props.className}` : "field"}>
       <span>{props.label}</span>
       <input
         type={props.type ?? "text"}
@@ -2589,16 +3100,6 @@ function DeckToggle(props: {
 
 function EmptyState(props: { text: string }): JSX.Element {
   return <div className="emptyState">{props.text}</div>;
-}
-
-function pageLabel(page: Page): string {
-  const labels: Record<Page, string> = {
-    home: "项目首页",
-    generate: "素材生成",
-    assets: "素材库",
-    settings: "应用设置"
-  };
-  return labels[page];
 }
 
 function presetsFor(type: AssetType): { name: string; description: string; size: string; count: number; transparentBackground: boolean } {

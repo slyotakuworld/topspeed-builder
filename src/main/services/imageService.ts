@@ -45,6 +45,29 @@ interface AutoCellCore {
 }
 
 export class ImageProcessingService {
+  /** 上次主动让出事件循环的时刻（毫秒），供 breathe() 做时间片节流 */
+  private lastYieldAt = 0;
+  /** 小缩略图内存缓存：key = `绝对路径::目标边长::mtime` */
+  private readonly thumbCache = new Map<string, string>();
+
+  /**
+   * 长同步像素循环里的「主动让出事件循环」。
+   *
+   * 背景：主进程的 JS 长任务会把输入法 / 键盘事件流饿死，Windows 上表现为
+   * 「鼠标能点、所有输入框打不出字、要等很久才能操作」（previewDataUrl 的注释记录过同一现象，
+   * generationHistoryService.prewarmThumbnails 也是为此加间隔）。
+   * computeAutoCells 这类 O(W·H) 的纯 JS 像素运算（掩码 + 多档闭运算 + 连通域 + 归并）
+   * 在 1024–2048px 的网格大图上单次要跑一两秒，期间主进程完全无法响应 IPC。
+   * 因此在最重的几层循环里按时间片（16ms）插一次 await，把长任务切成小片，
+   * 让输入事件与 IPC 有机会插进来；代价只是检测总耗时略微增加。
+   */
+  private async breathe(): Promise<void> {
+    const now = Date.now();
+    if (now - this.lastYieldAt < 16) return;
+    this.lastYieldAt = now;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
   async processImage(input: Buffer, options: ProcessImageOptions): Promise<Buffer> {
     let output = await this.prepareForeground(input, options);
 
@@ -105,13 +128,13 @@ export class ImageProcessingService {
     const channels = info.channels;
     if (width < 32 || height < 32) return null;
 
-    const mask = this.buildContentMask(data, info, channels);
+    const mask = await this.buildContentMask(data, info, channels);
     if (!mask) return null;
     const total = width * height;
     // 只清真正的噪点（几像素的孤立点）。这里的面积下限绝不能再抬高：
     // 武器尖、披风角这类"边角料"面积虽小，却要在第 2 步被完整并进所属素材的包围盒。
     const minArea = Math.max(10, Math.floor(total * 0.00001));
-    this.removeTinyNoise(mask, width, height);
+    await this.removeTinyNoise(mask, width, height);
 
     const cols = Math.ceil(Math.sqrt(expected));
     const rows = Math.ceil(expected / cols);
@@ -124,11 +147,11 @@ export class ImageProcessingService {
     let mainComponents: BoundingComponent[] | null = null;
     let bestScore = Number.POSITIVE_INFINITY;
     for (const k of kernels) {
-      const closed = k > 0 ? this.morphClose(mask, width, height, k) : mask;
+      const closed = k > 0 ? await this.morphClose(mask, width, height, k) : mask;
       // 只把"够格当一个素材"的连通块算作主躯干：混进来的十几像素孤斑（抗锯齿残片、
       // 武器断开的一角）会把数量顶高，凑出看似命中的 expected，实际切出一张空白图。
       const components = this.filterSpriteSized(
-        this.labelAndFilterComponents(closed, width, height, minArea)
+        await this.labelAndFilterComponents(closed, width, height, minArea)
       );
       if (components.length === 0) continue;
       if (components.length === expected) {
@@ -141,19 +164,21 @@ export class ImageProcessingService {
         bestScore = score;
         mainComponents = components;
       }
+      // 每一档闭运算都是一次全图遍历，跑完一档就把主进程还给输入事件
+      await this.breathe();
     }
     if (!mainComponents || mainComponents.length === 0) return null;
 
     // 2) 碎块归属：把武器 / 披风等边角料并进最近的主躯干，得到包住完整素材的真实包围盒
-    let groups = this.absorbFragments(mask, width, height, minArea, mainComponents);
+    let groups = await this.absorbFragments(mask, width, height, minArea, mainComponents);
     if (groups.length === 0) return null;
 
     // 3.5) 粘连拆分：相邻两个素材画到粘连时会被并成一格（表现为某格高达网格行距的近两倍）。
     //     只有数量还不够时才动刀，且只在"内容最稀疏"处下刀，避免把完好的素材切坏。
     if (groups.length < expected) {
-      groups = this.splitOversizedGroups(groups, mask, width, height, cols, rows);
+      groups = await this.splitOversizedGroups(groups, mask, width, height, cols, rows);
       if (groups.length > expected) {
-        groups = this.mergeNearestGroups(groups, expected, gateRadius);
+        groups = await this.mergeNearestGroups(groups, expected, gateRadius);
       }
     }
 
@@ -163,16 +188,16 @@ export class ImageProcessingService {
     //    装不下或明显过载（多半是碎片/同一素材被拆散），才按包围盒间距最小反复合并。
     const slots = cols * rows;
     if (groups.length > expected && (groups.length > slots || groups.length - expected > 2)) {
-      groups = this.mergeNearestGroups(groups, expected, gateRadius);
+      groups = await this.mergeNearestGroups(groups, expected, gateRadius);
       if (groups.length > expected) {
-        const slotted = this.assignComponentsToSlots(groups, expected, cols, rows, width, height);
+        const slotted = await this.assignComponentsToSlots(groups, expected, cols, rows, width, height);
         if (slotted) return { cells: slotted, groups: null, mask, width, height };
       }
     }
 
     // 数量不足期望的一半 → 主躯干定位不可信，最后试一次投影推断网格线（对粘连 / 噪点图更稳）
     if (groups.length < Math.max(2, Math.ceil(expected * 0.5))) {
-      const projected = this.inferGridFromMask(mask, width, height, cols, rows);
+      const projected = await this.inferGridFromMask(mask, width, height, cols, rows);
       if (projected) {
         const slice = projected.slice(0, expected);
         if (slice.length === expected) return { cells: slice, groups: null, mask, width, height };
@@ -239,7 +264,7 @@ export class ImageProcessingService {
     const core = await this.computeAutoCells(input, expected);
     if (!core) return null;
     const labelMask = core.groups
-      ? this.buildCellLabelMask(core.mask, core.width, core.height, core.groups)
+      ? await this.buildCellLabelMask(core.mask, core.width, core.height, core.groups)
       : null;
     return { cells: core.cells, labelMask, width: core.width, height: core.height };
   }
@@ -250,13 +275,13 @@ export class ImageProcessingService {
    * 同组连通块（含连到身上的武器、被 absorbFragments 并进的边角料）共享同一标签。
    * 返回 Int32Array：0=背景，i+1=第 i 个 cell 的内容。commitSlice 据此把"非本格"像素置透明。
    */
-  private buildCellLabelMask(
+  private async buildCellLabelMask(
     mask: Uint8Array,
     width: number,
     height: number,
     groups: BoundingComponent[]
-  ): Int32Array {
-    const { labels, components } = this.labelComponentsWithIds(mask, width, height);
+  ): Promise<Int32Array> {
+    const { labels, components } = await this.labelComponentsWithIds(mask, width, height);
     const compGroup = new Int32Array(components.length).fill(-1);
     for (let ci = 0; ci < components.length; ci += 1) {
       const comp = components[ci];
@@ -281,22 +306,26 @@ export class ImageProcessingService {
       compGroup[ci] = bestIndex;
     }
     const cellLabels = new Int32Array(width * height);
-    for (let p = 0; p < cellLabels.length; p += 1) {
-      const cid = labels[p];
-      if (cid === 0) continue;
-      const gi = compGroup[cid - 1];
-      if (gi < 0) continue;
-      cellLabels[p] = gi + 1;
+    for (let y = 0; y < height; y += 1) {
+      const row = y * width;
+      for (let x = 0; x < width; x += 1) {
+        const cid = labels[row + x];
+        if (cid === 0) continue;
+        const gi = compGroup[cid - 1];
+        if (gi < 0) continue;
+        cellLabels[row + x] = gi + 1;
+      }
+      await this.breathe();
     }
     return cellLabels;
   }
 
   /** 4-连通区域标记并返回每像素的连通块 id（1-based）+ 各块质心，供 buildCellLabelMask 用 */
-  private labelComponentsWithIds(
+  private async labelComponentsWithIds(
     mask: Uint8Array,
     width: number,
     height: number
-  ): { labels: Int32Array; components: Array<{ cx: number; cy: number; minX: number; minY: number; maxX: number; maxY: number }> } {
+  ): Promise<{ labels: Int32Array; components: Array<{ cx: number; cy: number; minX: number; minY: number; maxX: number; maxY: number }> }> {
     const total = width * height;
     const labels = new Int32Array(total);
     const stack = new Int32Array(total);
@@ -356,21 +385,25 @@ export class ImageProcessingService {
       }
       components.push({ cx: sumX / count, cy: sumY / count, minX, minY, maxX, maxY });
       nextId += 1;
+      await this.breathe();
     }
     return { labels, components };
   }
 
   /** 生成前景掩码：透明图按 alpha，不透明图按与边缘底色的颜色距离 */
-  private buildContentMask(data: Buffer, info: sharp.OutputInfo, channels: number): Uint8Array | null {
+  private async buildContentMask(data: Buffer, info: sharp.OutputInfo, channels: number): Promise<Uint8Array | null> {
     const width = info.width;
     const height = info.height;
     const total = width * height;
     let fullyTransparent = 0;
     let fullyOpaque = 0;
-    for (let i = 0; i < total; i += 1) {
-      const alpha = data[i * channels + 3];
-      if (alpha <= 16) fullyTransparent += 1;
-      else if (alpha >= 240) fullyOpaque += 1;
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const alpha = data[(y * width + x) * channels + 3];
+        if (alpha <= 16) fullyTransparent += 1;
+        else if (alpha >= 240) fullyOpaque += 1;
+      }
+      await this.breathe();
     }
     const transparentRatio = fullyTransparent / total;
     const opaqueRatio = fullyOpaque / total;
@@ -378,8 +411,12 @@ export class ImageProcessingService {
 
     if (transparentRatio > 0.005 && opaqueRatio < 0.985) {
       // 透明背景：alpha ≥ 24 视为内容（容忍抠图后的细边）
-      for (let i = 0; i < total; i += 1) {
-        if (data[i * channels + 3] >= 24) mask[i] = 1;
+      for (let y = 0; y < height; y += 1) {
+        const row = y * width;
+        for (let x = 0; x < width; x += 1) {
+          if (data[(row + x) * channels + 3] >= 24) mask[row + x] = 1;
+        }
+        await this.breathe();
       }
       return mask;
     }
@@ -387,22 +424,27 @@ export class ImageProcessingService {
     // 不透明均匀底色：与四边采样的主体颜色差异足够大才算内容
     const background = this.estimateBackgroundFromEdges(data, info);
     const tolerance = Math.max(18, this.computeAdaptiveTolerance(data, info, background, channels));
-    for (let i = 0; i < total; i += 1) {
-      const offset = i * channels;
-      const dr = data[offset] - background.r;
-      const dg = data[offset + 1] - background.g;
-      const db = data[offset + 2] - background.b;
-      if (dr * dr + dg * dg + db * db > tolerance * tolerance) mask[i] = 1;
+    const threshold = tolerance * tolerance;
+    for (let y = 0; y < height; y += 1) {
+      const row = y * width;
+      for (let x = 0; x < width; x += 1) {
+        const offset = (row + x) * channels;
+        const dr = data[offset] - background.r;
+        const dg = data[offset + 1] - background.g;
+        const db = data[offset + 2] - background.b;
+        if (dr * dr + dg * dg + db * db > threshold) mask[row + x] = 1;
+      }
+      await this.breathe();
     }
     return mask;
   }
 
   /** 4-连通区域标记：统计每块的像素数与真实包围盒 */
-  private labelComponents(
+  private async labelComponents(
     mask: Uint8Array,
     width: number,
     height: number
-  ): Array<{ area: number; minX: number; minY: number; maxX: number; maxY: number }> {
+  ): Promise<Array<{ area: number; minX: number; minY: number; maxX: number; maxY: number }>> {
     const total = width * height;
     const visited = new Uint8Array(total);
     const stack = new Int32Array(total);
@@ -460,18 +502,20 @@ export class ImageProcessingService {
       }
 
       components.push({ area, minX, minY, maxX, maxY });
+      // 一个连通块标记完就喘口气：单个素材的像素量就可能到百万级
+      await this.breathe();
     }
     return components;
   }
 
   /** 4-连通区域标记 + 按尺寸过滤（≥3px 且 ≥minArea），供 detectAutoCells 多级兜底复用 */
-  private labelAndFilterComponents(
+  private async labelAndFilterComponents(
     mask: Uint8Array,
     width: number,
     height: number,
     minArea: number
-  ): BoundingComponent[] {
-    const raw = this.labelComponents(mask, width, height);
+  ): Promise<BoundingComponent[]> {
+    const raw = await this.labelComponents(mask, width, height);
     return raw.filter(
       (component) =>
         component.maxX - component.minX + 1 >= 3 &&
@@ -481,15 +525,15 @@ export class ImageProcessingService {
   }
 
   /** 二值形态学闭运算：先 dilate 后 erode，桥接同一素材内的细缝。kernelSize 需 ≥3 且为奇数 */
-  private morphClose(mask: Uint8Array, width: number, height: number, kernelSize: number): Uint8Array {
+  private async morphClose(mask: Uint8Array, width: number, height: number, kernelSize: number): Promise<Uint8Array> {
     if (kernelSize < 3) return mask;
     const radius = (kernelSize - 1) / 2;
-    const dilated = this.morphDilate(mask, width, height, radius);
+    const dilated = await this.morphDilate(mask, width, height, radius);
     return this.morphErode(dilated, width, height, radius);
   }
 
   /** 1D 可分离方形核的膨胀：水平 + 垂直两次扫描，O(W·H·K) 而非 O(W·H·K²) */
-  private morphDilate(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
+  private async morphDilate(mask: Uint8Array, width: number, height: number, radius: number): Promise<Uint8Array> {
     const total = width * height;
     const tmp = new Uint8Array(total);
     for (let y = 0; y < height; y += 1) {
@@ -503,6 +547,7 @@ export class ImageProcessingService {
         }
         tmp[row + x] = any;
       }
+      await this.breathe();
     }
     const out = new Uint8Array(total);
     for (let x = 0; x < width; x += 1) {
@@ -515,12 +560,13 @@ export class ImageProcessingService {
         }
         out[y * width + x] = any;
       }
+      await this.breathe();
     }
     return out;
   }
 
   /** 1D 可分离方形核的腐蚀：水平 + 垂直两次扫描 */
-  private morphErode(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
+  private async morphErode(mask: Uint8Array, width: number, height: number, radius: number): Promise<Uint8Array> {
     const total = width * height;
     const tmp = new Uint8Array(total);
     for (let y = 0; y < height; y += 1) {
@@ -534,6 +580,7 @@ export class ImageProcessingService {
         }
         tmp[row + x] = all;
       }
+      await this.breathe();
     }
     const out = new Uint8Array(total);
     for (let x = 0; x < width; x += 1) {
@@ -546,6 +593,7 @@ export class ImageProcessingService {
         }
         out[y * width + x] = all;
       }
+      await this.breathe();
     }
     return out;
   }
@@ -555,18 +603,18 @@ export class ImageProcessingService {
    * 推断真实网格边界（允许各列/行宽窄略有不同）。
    * 任一行/列方向推断失败则整体返回 null，由调用方走下一级兜底。
    */
-  private inferGridFromMask(
+  private async inferGridFromMask(
     mask: Uint8Array,
     width: number,
     height: number,
     cols: number,
     rows: number
-  ): GridAutoCell[] | null {
-    const rowDensity = this.computeDensityProfile(mask, width, height, true);
-    const colDensity = this.computeDensityProfile(mask, width, height, false);
-    const hLines = this.inferLinesByDensity(rowDensity, rows - 1);
+  ): Promise<GridAutoCell[] | null> {
+    const rowDensity = await this.computeDensityProfile(mask, width, height, true);
+    const colDensity = await this.computeDensityProfile(mask, width, height, false);
+    const hLines = await this.inferLinesByDensity(rowDensity, rows - 1);
     if (!hLines) return null;
-    const vLines = this.inferLinesByDensity(colDensity, cols - 1);
+    const vLines = await this.inferLinesByDensity(colDensity, cols - 1);
     if (!vLines) return null;
     const cells: GridAutoCell[] = [];
     for (let row = 0; row < rows; row += 1) {
@@ -583,12 +631,12 @@ export class ImageProcessingService {
   }
 
   /** 计算某方向的"内容密度剖面"（该行/列中内容像素占比），并做轻度平滑去毛刺 */
-  private computeDensityProfile(
+  private async computeDensityProfile(
     mask: Uint8Array,
     width: number,
     height: number,
     horizontal: boolean
-  ): Float32Array {
+  ): Promise<Float32Array> {
     const len = horizontal ? height : width;
     const outer = horizontal ? height : width;
     const raw = new Float32Array(len);
@@ -605,6 +653,7 @@ export class ImageProcessingService {
         }
       }
       raw[i] = count / outer;
+      await this.breathe();
     }
     // 轻度移动平均：抹掉单列/单行的孤立毛刺，同时保留真实的空隙带
     const half = Math.max(1, Math.round(len / 200));
@@ -630,7 +679,7 @@ export class ImageProcessingService {
    *       也天然排除图像外围的空白边（把外边距当切点会让首/末段过窄）。
    * 校验：任一最优切点处密度 ≥ 峰值×0.25 视为切到了内容，整体判定失败返回 null。
    */
-  private inferLinesByDensity(density: Float32Array, n: number): number[] | null {
+  private async inferLinesByDensity(density: Float32Array, n: number): Promise<number[] | null> {
     const len = density.length;
     if (n <= 0) return [0, len];
     const segments = n + 1;
@@ -676,6 +725,8 @@ export class ImageProcessingService {
           from[j][p] = bestQ;
         }
       }
+      // 每一段都是一次 O(len·maxSeg) 的 DP 扫描
+      await this.breathe();
     }
     if (from[segments][len] < 0) return null;
 
@@ -697,14 +748,14 @@ export class ImageProcessingService {
   }
 
   /** 等分槽位归并：把每个连通块按"中心最近"指派到 expected 个槽位之一，返回各槽位的并集包围盒 */
-  private assignComponentsToSlots(
+  private async assignComponentsToSlots(
     components: BoundingComponent[],
     expected: number,
     cols: number,
     rows: number,
     width: number,
     height: number
-  ): GridAutoCell[] | null {
+  ): Promise<GridAutoCell[] | null> {
     if (cols < 1 || rows < 1) return null;
     const stepX = width / cols;
     const stepY = height / rows;
@@ -727,6 +778,7 @@ export class ImageProcessingService {
         }
       }
       owners[index] = bestSlot;
+      await this.breathe();
     }
     const cells: GridAutoCell[] = [];
     for (let slot = 0; slot < expected; slot += 1) {
@@ -758,14 +810,14 @@ export class ImageProcessingService {
    * 面积远小于最大块的（武器尖、披风角、光效等边角料）会被并入最近的主躯干，
    * 因此包围盒是"素材本体 + 全部边角料"的真实范围，而不是只包住身体导致武器被切掉。
    */
-  private absorbFragments(
+  private async absorbFragments(
     mask: Uint8Array,
     width: number,
     height: number,
     minArea: number,
     mainComponents: BoundingComponent[]
-  ): BoundingComponent[] {
-    const all = this.labelAndFilterComponents(mask, width, height, minArea);
+  ): Promise<BoundingComponent[]> {
+    const all = await this.labelAndFilterComponents(mask, width, height, minArea);
     if (all.length === 0) return mainComponents.map((component) => ({ ...component }));
 
     let maxArea = 0;
@@ -810,11 +862,11 @@ export class ImageProcessingService {
    * 上下相邻的两个角色间距可能很小，但一合并就成细长条（高接近两倍行距），
    * 那多半是两个不同格的素材被强行捏在一起，要加重代价让算法优先去合并别的对。
    */
-  private mergeNearestGroups(
+  private async mergeNearestGroups(
     groups: BoundingComponent[],
     target: number,
     gateRadius: number
-  ): BoundingComponent[] {
+  ): Promise<BoundingComponent[]> {
     const merged = groups.map((component) => ({ ...component }));
     while (merged.length > target) {
       let bestI = -1;
@@ -848,6 +900,8 @@ export class ImageProcessingService {
       a.maxY = Math.max(a.maxY, b.maxY);
       a.area += b.area;
       merged.splice(bestJ, 1);
+      // 每一轮都是 O(n²) 的两两比较，轮末让出一次
+      await this.breathe();
     }
     return merged;
   }
@@ -872,14 +926,14 @@ export class ImageProcessingService {
    * 上下相邻的两个角色画到粘连时会并成一个连通块，此时整格高度接近两倍行距，
    * 单靠连通性永远分不开，必须借助网格节拍（行距 / 列距）在空隙带下刀。
    */
-  private splitOversizedGroups(
+  private async splitOversizedGroups(
     groups: BoundingComponent[],
     mask: Uint8Array,
     width: number,
     height: number,
     cols: number,
     rows: number
-  ): BoundingComponent[] {
+  ): Promise<BoundingComponent[]> {
     const cellW = width / cols;
     const cellH = height / rows;
     const out: BoundingComponent[] = [];
@@ -892,29 +946,30 @@ export class ImageProcessingService {
         out.push(group);
         continue;
       }
-      const yCuts = this.findLowDensityCuts(mask, width, group, splitRows, cellH, false);
-      const xCuts = this.findLowDensityCuts(mask, width, group, splitCols, cellW, true);
+      const yCuts = await this.findLowDensityCuts(mask, width, group, splitRows, cellH, false);
+      const xCuts = await this.findLowDensityCuts(mask, width, group, splitCols, cellW, true);
       const ys = [group.minY, ...yCuts, group.maxY + 1];
       const xs = [group.minX, ...xCuts, group.maxX + 1];
       for (let r = 0; r + 1 < ys.length; r += 1) {
         for (let c = 0; c + 1 < xs.length; c += 1) {
-          const box = this.contentBoxIn(mask, width, xs[c], ys[r], xs[c + 1] - 1, ys[r + 1] - 1);
+          const box = await this.contentBoxIn(mask, width, xs[c], ys[r], xs[c + 1] - 1, ys[r + 1] - 1);
           if (box) out.push(box);
         }
       }
+      await this.breathe();
     }
     return out.length > 0 ? out : groups;
   }
 
   /** 在理想等分点附近找内容最稀疏的切分线（找"空隙带"下刀，避免切到素材本体） */
-  private findLowDensityCuts(
+  private async findLowDensityCuts(
     mask: Uint8Array,
     width: number,
     group: BoundingComponent,
     parts: number,
     pitch: number,
     horizontal: boolean
-  ): number[] {
+  ): Promise<number[]> {
     if (parts < 2) return [];
     const start = horizontal ? group.minX : group.minY;
     const end = horizontal ? group.maxX : group.maxY;
@@ -941,19 +996,20 @@ export class ImageProcessingService {
         }
       }
       if (bestLine > 0) cuts.push(bestLine);
+      await this.breathe();
     }
     return cuts;
   }
 
   /** 取矩形区域内的真实内容包围盒；区域内没有内容返回 null */
-  private contentBoxIn(
+  private async contentBoxIn(
     mask: Uint8Array,
     width: number,
     x0: number,
     y0: number,
     x1: number,
     y1: number
-  ): BoundingComponent | null {
+  ): Promise<BoundingComponent | null> {
     let minX = -1;
     let minY = -1;
     let maxX = -1;
@@ -969,6 +1025,7 @@ export class ImageProcessingService {
         if (minY < 0) minY = y;
         maxY = y;
       }
+      await this.breathe();
     }
     if (minX < 0) return null;
     return { area, minX, minY, maxX, maxY };
@@ -1265,7 +1322,7 @@ export class ImageProcessingService {
    * 在闭运算之前就整块删掉了，切出来的角色缺胳膊少腿。现在阈值压到个位数像素，
    * 小碎件一律保留，交给 absorbFragments 并进所属素材的包围盒。
    */
-  private removeTinyNoise(mask: Uint8Array, width: number, height: number): void {
+  private async removeTinyNoise(mask: Uint8Array, width: number, height: number): Promise<void> {
     const total = width * height;
     const visited = new Uint8Array(total);
     const minRegion = Math.max(4, Math.floor(total * 0.000004));
@@ -1299,6 +1356,7 @@ export class ImageProcessingService {
       if (component.length < minRegion) {
         for (const index of component) mask[index] = 0;
       }
+      await this.breathe();
     }
   }
 
@@ -1611,5 +1669,37 @@ export class ImageProcessingService {
       .png()
       .toBuffer();
     return `data:image/png;base64,${buffer.toString("base64")}`;
+  }
+
+  /**
+   * 列表密集场景（素材库切图墙等）专用的小缩略图：最长边默认 160px，额外带一层主进程内存缓存。
+   *
+   * 为什么不能直接用 previewDataUrl：素材库一屏可能有十几条记录、每条 16 张切图，
+   * 一次性把这些图按 1024px 读回渲染进程，等于让渲染主线程连续解码几百张 PNG，
+   * Windows 上会表现为「鼠标能点、所有输入框打字失灵」（见 previewDataUrl 的注释）。
+   * 这里统一压到 160px，并把结果按「路径 + mtime + 尺寸」缓存，翻页来回切也不再重复解码。
+   * 需要看细节时由界面按需调 previewDataUrl 取大图。
+   */
+  async thumbDataUrl(absolutePath: string, maxSide = 160): Promise<string> {
+    let stamp: string;
+    try {
+      const stat = await fs.stat(absolutePath);
+      stamp = String(stat.mtimeMs);
+    } catch {
+      return "";
+    }
+    const key = `${absolutePath}::${maxSide}::${stamp}`;
+    const cached = this.thumbCache.get(key);
+    if (cached) return cached;
+
+    const dataUrl = await this.previewDataUrl(absolutePath, maxSide);
+    // 简易容量控制：Map 保持插入顺序，超限时丢弃最早的一批（不做精确 LRU，够用且零额外开销）
+    if (this.thumbCache.size >= 800) {
+      for (const stale of Array.from(this.thumbCache.keys()).slice(0, 300)) {
+        this.thumbCache.delete(stale);
+      }
+    }
+    this.thumbCache.set(key, dataUrl);
+    return dataUrl;
   }
 }

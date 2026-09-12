@@ -295,6 +295,23 @@ export interface HistorySliceOptions {
 }
 
 /**
+ * 素材库记录的三种状态（由历史记录字段推导，不额外落盘）：
+ * - empty  ：只有配置快照，还没有任何图（例如「新建出图」后仅保存历史记录）
+ * - grid   ：已有网格整图，但尚未切图入库
+ * - sliced ：已切图入库，有独立素材文件
+ */
+export type LibraryAssetState = "empty" | "grid" | "sliced";
+
+/** 由历史记录推导素材库状态：有切图文件 → sliced；否则有整图 → grid；都没有 → empty */
+export function resolveLibraryAssetState(entry: {
+  grid?: { gridImagePath?: string } | null;
+  files?: string[] | null;
+}): LibraryAssetState {
+  if (Array.isArray(entry.files) && entry.files.length > 0) return "sliced";
+  return entry.grid?.gridImagePath ? "grid" : "empty";
+}
+
+/**
  * 一次「生成」的历史记录：点「生成网格大图」即落一条 draft，
  * 确认切分入库后由服务端原地更新为 committed（同一 runId）。
  * 持久化于项目目录 history.json，重启后仍可查看/续做草稿。
@@ -303,6 +320,11 @@ export interface GenerationHistoryEntry {
   runId: string;
   /** draft = 只生成了网格大图草稿；committed = 已切分入库 */
   status: "draft" | "committed";
+  /**
+   * 素材库 / 历史记录共用的显示名：两处是同一个名字，重命名任一处都会同步。
+   * 缺省回退到 input.name（批次名）。
+   */
+  name?: string;
   createdAt: string;
   committedAt?: string;
   /** 生成时的完整表单快照：用于历史回看、以及载入草稿后继续切分 */

@@ -148,6 +148,23 @@ export class ProjectService {
     }
   }
 
+  /**
+   * 重命名素材批次：素材库与历史记录共用同一个名字，改名时两边一起更新。
+   * 只改展示名（project.json 的 asset.name / history.json 的 entry.name），
+   * 不改动已落盘的素材文件名与 metadata，避免破坏既有引用。
+   */
+  async renameAsset(projectPath: string, assetId: string, name: string): Promise<Project> {
+    const nextName = name.trim().slice(0, 80);
+    return withFileLock(path.join(projectPath, "project.json"), async () => {
+      const project = await this.readNormalizedProject(this.projectJsonPath(projectPath));
+      if (!nextName) return project;
+      const assets = project.assets.map((asset) =>
+        asset.id === assetId ? { ...asset, name: nextName, updatedAt: nowIso() } : asset
+      );
+      return this.saveProjectUnlocked({ ...project, assets });
+    });
+  }
+
   async deleteAsset(projectPath: string, assetId: string): Promise<Project> {
     return withFileLock(path.join(projectPath, "project.json"), async () => {
       const project = await this.readNormalizedProject(this.projectJsonPath(projectPath));

@@ -23,6 +23,10 @@ import { GenerationHistoryService } from "./generationHistoryService";
 import { ImageProcessingService } from "./imageService";
 import { ProjectService } from "./projectService";
 import { SettingsService } from "./settingsService";
+import {
+  OPAQUE_GRID_BACKGROUND_RULE,
+  TRANSPARENT_BACKGROUND_RULE
+} from "@shared/backgroundPrompt";
 import { nowIso, resolveProjectPath, sanitizeFileName, toRelative, writeJsonFile } from "./utils";
 
 interface ResolvedReferenceImage extends ReferenceImageInput {
@@ -51,7 +55,7 @@ export class GenerationService {
     const referenceImages = this.resolveReferenceImages(project, input);
     const hasReference = referenceImages.length > 0;
 
-    const buffer = await this.generateWithRetry(
+    const { buffer, apiUsedTransparentBackground } = await this.generateWithRetry(
       prompt,
       input.size || "1024x1024",
       input.transparentBackground,
@@ -73,7 +77,11 @@ export class GenerationService {
     await this.historyService.writeThumbnailFromBuffer(project.path, runId, gridBuffer);
     logs.push(`保存网格大图: ${gridPath}`);
     if (input.transparentBackground) {
-      logs.push("透明背景：已对网格大图执行背景移除，素材将输出为透明 PNG。");
+      logs.push(
+        apiUsedTransparentBackground
+          ? "透明链路：请求已携带 API background=transparent；若仍有色边，多为模型未真透明，已对网格大图做本地清理。"
+          : "透明链路：网关未接受 background=transparent，已降级为不透明出图（中性灰底提示词）；已对网格大图执行本地抠图。"
+      );
     }
 
     const metadata = await sharp(gridBuffer).metadata();
@@ -767,19 +775,19 @@ export class GenerationService {
   }
 
   /**
-   * 背景规则：
-   * - 透明背景模式 → 强制干净纯色背景，方便后续抠图；
-   * - 单张整图（插画类）且非透明 → 保留内容所需环境/场景，不再强制纯色；
-   * - 多素材网格且非透明 → 仍需干净纯色底，保证每个格子可读。
+   * 背景规则（与 API `background: transparent` 一致，避免再引导绿幕/品红幕）：
+   * - 透明模式 → 要求真 alpha；
+   * - 单张插画且非透明 → 保留场景；
+   * - 多格网格且非透明 → 中性灰底，便于本地抠图。
    */
   private buildBackgroundRule(input: GenerateAssetInput, singleShot: boolean): string {
     if (input.transparentBackground) {
-      return "Background: use one clean, uniform solid-color background that is easy to remove later; no ground shadows, no text, no watermark.";
+      return TRANSPARENT_BACKGROUND_RULE;
     }
     if (singleShot) {
       return "Background: keep the natural environment or scenery that fits the described content; no text and no watermark.";
     }
-    return "Background: use one clean, uniform solid-color background for every cell; no ground shadows, no text, no watermark.";
+    return OPAQUE_GRID_BACKGROUND_RULE;
   }
 
   private buildStylePrompt(project: Project, input: GenerateAssetInput): string {
@@ -842,7 +850,7 @@ export class GenerationService {
     input: GenerateAssetInput,
     referenceImages: ResolvedReferenceImage[],
     editIntent: "preserve-style" | undefined
-  ): Promise<Buffer> {
+  ): Promise<{ buffer: Buffer; apiUsedTransparentBackground: boolean }> {
     const settings = await this.settingsService.getSettings();
     let lastError: unknown;
 

@@ -1,6 +1,13 @@
 import path from "node:path";
 import fs from "fs-extra";
+import { OPAQUE_API_FALLBACK_BACKGROUND_APPEND } from "@shared/backgroundPrompt";
 import type { AppSettings, GenerationQuality, ReferenceImageRole, ReferenceStrength } from "@shared/types";
+
+export interface GenerateImageResult {
+  buffer: Buffer;
+  /** 成功请求是否携带了 `background: transparent` */
+  apiUsedTransparentBackground: boolean;
+}
 
 interface ReferenceImagePayload {
   filePath: string;
@@ -21,7 +28,7 @@ interface GenerateImageArgs {
 }
 
 export class AIGenerationService {
-  async generateImage(args: GenerateImageArgs): Promise<Buffer> {
+  async generateImage(args: GenerateImageArgs): Promise<GenerateImageResult> {
     if (!args.settings.apiBaseUrl.trim()) {
       throw new Error("接口地址为空。请在设置页配置 API 接口地址。");
     }
@@ -126,8 +133,8 @@ export class AIGenerationService {
     transparentBackground: boolean;
   }): string {
     const background = parts.transparentBackground
-      ? "透明背景，主体居中，不要地面阴影，不要文字，不要水印。"
-      : "干净的游戏素材背景。";
+      ? "透明背景（真 PNG 透明通道），主体居中；禁止绿幕、品红幕等纯色抠图底；不要地面阴影、文字、水印。"
+      : "中性深灰均匀底（#2b2b2b），禁止荧光色幕布；干净的游戏素材背景。";
 
     return [
       `生成可直接用于游戏工程的二维${parts.assetType}精灵，名称为：${parts.name}。`,
@@ -146,7 +153,7 @@ export class AIGenerationService {
     args: GenerateImageArgs,
     endpoint: string,
     useReference: boolean
-  ): Promise<Buffer> {
+  ): Promise<GenerateImageResult> {
     // 统一 trim 后再发出：首尾空白会被上游判定为「不是合法模型 ID」(400)，
     // 与提示词助手保持一致（后者一直用 trim 后的值）。
     const model = args.settings.model.trim();
@@ -199,7 +206,11 @@ export class AIGenerationService {
         }
       }
 
-      return this.readImageResponse(response, "自定义接口", endpoint);
+      const buffer = await this.readImageResponse(response, "自定义接口", endpoint);
+      return {
+        buffer,
+        apiUsedTransparentBackground: args.transparentBackground === true
+      };
     }
 
     // ---- 无参考图：JSON 通道（OpenAI Images 标准参数 + 降级链）----
@@ -210,9 +221,14 @@ export class AIGenerationService {
     const wantsTransparent = args.transparentBackground === true;
     const wantsQuality = Boolean(args.quality);
 
+    const promptForRequest = (withTransparent: boolean): string => {
+      if (withTransparent || !wantsTransparent) return args.prompt;
+      return `${args.prompt}\n\n${OPAQUE_API_FALLBACK_BACKGROUND_APPEND}`;
+    };
+
     const buildPayload = (useQuality: boolean, withTransparent: boolean): Record<string, unknown> => {
       const payload: Record<string, unknown> = {
-        prompt: args.prompt,
+        prompt: promptForRequest(withTransparent),
         size: args.size,
         model
       };
@@ -239,7 +255,11 @@ export class AIGenerationService {
     for (const candidate of candidates) {
       const response = await this.postJson(endpoint, args.settings.apiKey, buildPayload(candidate.q, candidate.bg));
       if (response.ok) {
-        return this.readImageResponse(response, "自定义接口", endpoint);
+        const buffer = await this.readImageResponse(response, "自定义接口", endpoint);
+        return {
+          buffer,
+          apiUsedTransparentBackground: wantsTransparent && candidate.bg
+        };
       }
       const body = await response.text();
       if (!this.isUnsupportedImageOptionError(response.status, body)) {
